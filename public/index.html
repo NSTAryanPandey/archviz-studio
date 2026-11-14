@@ -118,11 +118,12 @@
     <span class="dot"></span>
     <span id="studio-name" style="font-weight:600;font-size:14px">Studio</span>
     <span class="sep"></span>
-    <span class="hint"><b>WASD</b> move · <b>2-finger swipe</b>/arrows look · <b>Pinch</b> zoom · <b>Tap</b> place · <b>R</b> rotate · <b>E</b> delete · <b>Z X</b>/1-0 pick · <b>N</b> night · <b>T</b> rain · <b>H</b> hide UI · <b>P</b> photo</span>
+    <span class="hint"><b>WASD</b> move · <b>2-finger swipe</b>/arrows look · <b>Pinch</b> zoom · <b>Tap</b> place · <b>R</b> rotate · <b>E</b> delete · <b>Z X</b>/1-0 pick · <b>N</b> night · <b>T</b> rain · <b>H</b> hide UI · <b>P</b> photo · <b>F</b> fullscreen</span>
   </div>
   <div class="glass tools">
     <span id="fps">-- fps</span>
     <span id="exposure">EV 1.00</span>
+    <button id="btn-fullscreen" title="Fullscreen (F)">⛶</button>
     <button id="btn-daynight" title="Day / Night (N)">🌙</button>
     <button id="btn-weather" title="Rain (T)">🌧️</button>
     <button id="btn-quality" class="on" title="AO + Bloom (Q)">✨</button>
@@ -1498,7 +1499,7 @@ function tryLock() {
 }
 document.addEventListener('pointerlockchange', () => {
   look.locked = document.pointerLockElement === renderer.domElement;
-  if (look.locked) flashHint('FPS mode — Esc or F to free the cursor', 2000);
+  if (look.locked) flashHint('FPS mode — Esc or L to free the cursor', 2000);
   updateModeUI();
 });
 document.addEventListener('pointerlockerror', lockUnavailable);
@@ -1517,7 +1518,8 @@ document.addEventListener('keydown', (e) => {
   if (e.target.tagName === 'INPUT' || !started) return;
   keys[e.code] = true;
   if (e.repeat) return;
-  if (e.code === 'KeyF') { if (look.locked) document.exitPointerLock(); else tryLock(); }
+  if (e.code === 'KeyF') toggleFullscreen();
+  if (e.code === 'KeyL') { if (look.locked) document.exitPointerLock(); else tryLock(); }
   const step = e.altKey ? -Math.PI / 4 : Math.PI / 4;
   if (e.code === 'KeyR') { if (carry) carry.rot += step; else rotation += step; }
   if ((e.metaKey || e.ctrlKey) && e.code === 'KeyZ') { e.preventDefault(); if (e.shiftKey) redo(); else undo(); return; }
@@ -1585,6 +1587,31 @@ window.addEventListener('resize', () => {
   renderer.setSize(innerWidth, innerHeight); composer.setSize(innerWidth, innerHeight);
 });
 
+// ---- Fullscreen (desktop browsers, Android, iPad). iPhone Safari has no fullscreen API for pages:
+// there, "Add to Home Screen" gives the fullscreen app instead.
+const fsBtn = document.getElementById('btn-fullscreen');
+const fsElement = () => document.fullscreenElement || document.webkitFullscreenElement;
+const fsSupported = !!(document.documentElement.requestFullscreen || document.documentElement.webkitRequestFullscreen);
+const standalone = matchMedia('(display-mode: fullscreen), (display-mode: standalone)').matches || navigator.standalone;
+function enterFullscreen() {
+  if (!fsSupported || fsElement() || standalone) return;
+  const el = document.documentElement;
+  const req = el.requestFullscreen ? el.requestFullscreen({ navigationUI: 'hide' }) : el.webkitRequestFullscreen();
+  Promise.resolve(req).then(() => {
+    if (isTouch && screen.orientation && screen.orientation.lock) screen.orientation.lock('landscape').catch(() => {});
+  }).catch(() => {});
+}
+function exitFullscreen() { (document.exitFullscreen || document.webkitExitFullscreen).call(document); }
+function toggleFullscreen() {
+  if (!fsSupported) { flashHint(standalone ? 'Already running as a fullscreen app' : 'On iPhone: Share ⬆️ → Add to Home Screen for fullscreen', 3000); return; }
+  if (fsElement()) exitFullscreen(); else enterFullscreen();
+}
+function updateFsButton() { fsBtn.textContent = fsElement() ? '🗗' : '⛶'; fsBtn.title = fsElement() ? 'Exit fullscreen (F)' : 'Fullscreen (F)'; }
+document.addEventListener('fullscreenchange', updateFsButton);
+document.addEventListener('webkitfullscreenchange', updateFsButton);
+fsBtn.onclick = toggleFullscreen;
+if (standalone) fsBtn.style.display = 'none';           // installed app is already fullscreen
+
 const startBtn = document.getElementById('start-btn');
 startBtn.disabled = false; startBtn.textContent = 'Enter Studio Space';
 startBtn.addEventListener('click', async () => {
@@ -1595,6 +1622,7 @@ startBtn.addEventListener('click', async () => {
   document.getElementById('studio-name').textContent = `${name}'s Studio`;
   document.getElementById('modal').style.display = 'none';
   started = true;
+  enterFullscreen();                                   // the click on Start is the user gesture browsers require
   myName = name.slice(0, 24);
   connectNet();
   updateModeUI();
