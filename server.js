@@ -11,11 +11,12 @@ const os = require('os');
 const { Server } = require('socket.io');
 
 const PORT = process.env.PORT || 3000;
-const ROOM_W = 16, ROOM_D = 12;          // must match W / D in public/index.html (metres)
+const ROOM_W = 44, ROOM_D = 44;          // the whole fenced plot (house + garden): must match GW / GD in public/index.html
 const MAX_OBJECTS = 300;                  // per room
 const MAX_PLACES_PER_SEC = 8;             // simple anti-spam
 const TYPES = new Set(['sofa', 'bed', 'table', 'chair', 'rug', 'bookshelf', 'tv', 'wall', 'door', 'lamp', 'fireplace', 'armchair', 'coffee', 'plant',
-  'kitchen', 'fridge', 'island', 'desk', 'bathtub', 'toilet', 'vanity']);
+  'kitchen', 'fridge', 'island', 'desk', 'bathtub', 'toilet', 'vanity',
+  'tree', 'bush', 'flowers', 'bench', 'lounger', 'parasol', 'gardenlamp']);
 const DATA_FILE = path.join(__dirname, 'data', 'rooms.json');
 
 const app = express();
@@ -100,8 +101,11 @@ for (const sig of ['SIGTERM', 'SIGINT']) {
   });
 }
 function getRoom(name) {
-  if (!rooms.has(name)) rooms.set(name, { objects: [], env: { night: 0, rain: 0 }, players: new Map() });
-  return rooms.get(name);
+  if (!rooms.has(name)) rooms.set(name, { objects: [], env: { night: 0, rain: 0, party: 0 }, players: new Map() });
+  const r = rooms.get(name);
+  if (!r.pet) r.pet = { targetId: null, name: '' };
+  if (!r.hs) r.hs = { phase: 'idle', seekerId: null, seekerName: '', found: [], endsAt: 0, timer: null };
+  return r;
 }
 
 // ------------------------------------------------------------------ validation helpers
@@ -137,6 +141,13 @@ io.on('connection', (socket) => {
   function leave() {
     if (!room) return;
     releaseLocks();
+    if (room.pet.targetId === socket.id) { room.pet = { targetId: null, name: '' }; socket.to(roomName).emit('pet', room.pet); }
+    if (room.hs.phase !== 'idle') {
+      if (room.hs.seekerId === socket.id) { room.players.delete(socket.id); hsEnd(room, roomName, 'the seeker left'); }
+      else { room.hs.found = room.hs.found.filter(id => id !== socket.id); room.players.delete(socket.id);
+        if (room.players.size < 2) hsEnd(room, roomName, 'not enough players');
+        else if (room.hs.phase === 'seeking' && room.hs.found.length >= room.players.size - 1) hsEnd(room, roomName, 'everyone was found, the seeker wins'); }
+    }
     room.players.delete(socket.id);
     socket.to(roomName).emit('playerLeft', { id: socket.id });
     socket.leave(roomName);
@@ -156,7 +167,8 @@ io.on('connection', (socket) => {
     };
     room.players.set(socket.id, me);
     socket.join(roomName);
-    socket.emit('init', { you: socket.id, objects: room.objects.map(({ lockedBy, ...o }) => o), players: [...room.players.values()], env: room.env });
+    socket.emit('init', { you: socket.id, objects: room.objects.map(({ lockedBy, ...o }) => o), players: [...room.players.values()], env: room.env, pet: room.pet,
+      hs: { phase: room.hs.phase, seekerId: room.hs.seekerId, seekerName: room.hs.seekerName, found: room.hs.found, endsAt: room.hs.endsAt, now: Date.now() } });
     socket.to(roomName).emit('playerJoined', me);
     console.log(`${me.name} joined "${roomName}" (${room.players.size} online)`);
   });
@@ -243,17 +255,71 @@ io.on('connection', (socket) => {
 
   socket.on('env', (d = {}) => {
     if (!room) return;
-    room.env = { night: d.night ? 1 : 0, rain: d.rain ? 1 : 0 };
+    room.env = { night: d.night ? 1 : 0, rain: d.rain ? 1 : 0, party: d.party ? 1 : 0 };
     socket.to(roomName).emit('env', room.env);
     saveSoon(room);
   });
 
+  const POSES = new Set(['stand', 'sit', 'lie', 'floor']);
   socket.on('move', (d = {}) => {
     if (!room || !num(d.x, -50, 50) || !num(d.z, -50, 50) || !num(d.yaw, -1e6, 1e6) || !num(d.pitch, -2, 2)) return;
-    Object.assign(me, { x: d.x, z: d.z, yaw: d.yaw, pitch: d.pitch });
+    const y = num(d.y, 0, 3) ? d.y : 0, pose = POSES.has(d.pose) ? d.pose : 'stand', sy = num(d.sy, 0, 2) ? d.sy : 0;
+    Object.assign(me, { x: d.x, z: d.z, yaw: d.yaw, pitch: d.pitch, y, pose, sy });
     // volatile = OK to drop if the network is busy; a newer position is coming anyway
-    socket.to(roomName).volatile.emit('playerMoved', { id: socket.id, x: d.x, z: d.z, yaw: d.yaw, pitch: d.pitch });
+    socket.to(roomName).volatile.emit('playerMoved', { id: socket.id, x: d.x, z: d.z, yaw: d.yaw, pitch: d.pitch, y, pose, sy });
   });
+
+  // ---- emotes: just relayed to everyone else
+  const EMOTES = new Set(['wave', 'dance', 'jump', 'sit', 'clap']);
+  let lastEmote = 0;
+  socket.on('emote', (d = {}) => {
+    if (!room || !EMOTES.has(d.type) || Date.now() - lastEmote < 300) return;
+    lastEmote = Date.now();
+    socket.to(roomName).emit('emoted', { id: socket.id, type: d.type });
+  });
+
+  // ---- Bruno the dog: whoever calls him becomes his owner; calling again sends him to nap
+  socket.on('pet:call', () => {
+    if (!room) return;
+    room.pet = room.pet.targetId === socket.id ? { targetId: null, name: '' } : { targetId: socket.id, name: me.name };
+    io.to(roomName).emit('pet', room.pet);
+  });
+
+  // ---- hide & seek: the server picks the seeker, runs the timers and validates tags
+  const HIDE_MS = 20000, SEEK_MS = 150000;
+  const hsPublic = (r) => ({ phase: r.hs.phase, seekerId: r.hs.seekerId, seekerName: r.hs.seekerName, found: r.hs.found, endsAt: r.hs.endsAt, now: Date.now() });
+  function hsEnd(r, rn, reason) {
+    clearTimeout(r.hs.timer);
+    const total = Math.max(0, r.players.size - 1), found = r.hs.found.length, seekerName = r.hs.seekerName;
+    r.hs = { phase: 'idle', seekerId: null, seekerName: '', found: [], endsAt: 0, timer: null };
+    io.to(rn).emit('hs', hsPublic(r));
+    io.to(rn).emit('hs:end', { reason, found, total, seekerName });
+  }
+  socket.on('hs:start', () => {
+    if (!room || room.hs.phase !== 'idle') return;
+    if (room.players.size < 2) return socket.emit('hs:error', '🙈 Hide & seek needs at least 2 players: invite a friend!');
+    const ids = [...room.players.keys()], seekerId = ids[Math.floor(Math.random() * ids.length)];
+    const r = room, rn = roomName;
+    r.hs = { phase: 'hiding', seekerId, seekerName: r.players.get(seekerId).name, found: [], endsAt: Date.now() + HIDE_MS, timer: null };
+    io.to(rn).emit('hs', hsPublic(r));
+    r.hs.timer = setTimeout(() => {
+      if (r.hs.phase !== 'hiding') return;
+      r.hs.phase = 'seeking'; r.hs.endsAt = Date.now() + SEEK_MS;
+      io.to(rn).emit('hs', hsPublic(r));
+      r.hs.timer = setTimeout(() => { if (r.hs.phase === 'seeking') hsEnd(r, rn, "time's up, the hiders win"); }, SEEK_MS);
+    }, HIDE_MS);
+  });
+  socket.on('hs:tag', (d = {}) => {
+    if (!room || room.hs.phase !== 'seeking' || room.hs.seekerId !== socket.id) return;
+    const target = room.players.get(d.id);
+    if (!target || d.id === socket.id || room.hs.found.includes(d.id)) return;
+    if (Math.hypot(target.x - me.x, target.z - me.z) > 4) return;          // must actually be close
+    room.hs.found.push(d.id);
+    io.to(roomName).emit('hs', hsPublic(room));
+    io.to(roomName).emit('hs:found', { id: d.id, name: target.name });
+    if (room.hs.found.length >= room.players.size - 1) hsEnd(room, roomName, 'everyone was found, the seeker wins');
+  });
+  socket.on('hs:stop', () => { if (room && room.hs.phase !== 'idle') hsEnd(room, roomName, `stopped by ${me.name}`); });
 
   socket.on('disconnect', () => {
     if (me) console.log(`${me.name} left "${roomName}"`);
