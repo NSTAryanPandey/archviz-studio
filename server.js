@@ -12,6 +12,8 @@ const { Server } = require('socket.io');
 
 const PORT = process.env.PORT || 3000;
 const ROOM_W = 44, ROOM_D = 44;          // the whole fenced plot (house + garden): must match GW / GD in public/index.html
+const HOUSE_W = 16, HOUSE_D = 12, UPPER_Y = 3.2;   // upper floor + rooftop terrace (W, D, L1 in public/index.html)
+const levelOf = (y) => (y > UPPER_Y / 2 ? 1 : 0);
 const MAX_OBJECTS = 300;                  // per room
 const MAX_PLACES_PER_SEC = 8;             // simple anti-spam
 const TYPES = new Set(['sofa', 'bed', 'table', 'chair', 'rug', 'bookshelf', 'tv', 'wall', 'door', 'lamp', 'fireplace', 'armchair', 'coffee', 'plant',
@@ -120,9 +122,12 @@ function validatePlacement(room, d, ignoreId = null) {
   const a = d.aabb;
   if (!a || !num(a.minX, -ROOM_W, ROOM_W) || !num(a.maxX, -ROOM_W, ROOM_W) || !num(a.minZ, -ROOM_D, ROOM_D) || !num(a.maxZ, -ROOM_D, ROOM_D)) return 'bad size';
   if (a.maxX - a.minX > 4.5 || a.maxZ - a.minZ > 4.5) return 'too large';
-  if (a.minX < -ROOM_W / 2 - 0.01 || a.maxX > ROOM_W / 2 + 0.01 || a.minZ < -ROOM_D / 2 - 0.01 || a.maxZ > ROOM_D / 2 + 0.01) return 'outside the room';
-  if (!ignoreId && room.objects.length >= MAX_OBJECTS) return 'room is full';
-  if (!d.walkable && room.objects.some(o => o.id !== ignoreId && !o.walkable && overlap(a, o.aabb))) return 'space already taken';
+  if (d.y !== undefined && !(num(d.y, -0.01, 0.01) || num(d.y, UPPER_Y - 0.01, UPPER_Y + 0.01))) return 'bad floor';
+  const lv = levelOf(d.y || 0);
+  if (a.minX < -ROOM_W / 2 - 0.01 || a.maxX > ROOM_W / 2 + 0.01 || a.minZ < -ROOM_D / 2 - 0.01 || a.maxZ > ROOM_D / 2 + 0.01) return 'outside the plot';
+  if (lv === 1 && (a.minX < -HOUSE_W / 2 - 0.05 || a.maxX > HOUSE_W / 2 + 0.05 || a.minZ < -HOUSE_D / 2 - 0.05 || a.maxZ > HOUSE_D / 2 + 0.05)) return 'off the edge of the upper floor';
+  if (!ignoreId && room.objects.length >= MAX_OBJECTS) return 'house is full';
+  if (!d.walkable && room.objects.some(o => o.id !== ignoreId && !o.walkable && levelOf(o.y || 0) === lv && overlap(a, o.aabb))) return 'space already taken';
   return null;
 }
 
@@ -135,7 +140,7 @@ io.on('connection', (socket) => {
     if (!room) return;
     for (const o of room.objects) if (o.lockedBy === socket.id) {
       delete o.lockedBy; delete o.lockName;
-      io.to(roomName).emit('unlocked', { id: o.id, x: o.x, z: o.z, rot: o.rot });
+      io.to(roomName).emit('unlocked', { id: o.id, x: o.x, z: o.z, rot: o.rot, y: o.y || 0 });
     }
   }
   function leave() {
@@ -185,7 +190,7 @@ io.on('connection', (socket) => {
     if (reason) return socket.emit('rejected', { tempId, reason });
     const a = d.aabb;
     const item = {
-      id: crypto.randomUUID(), type: d.type, x: d.x, z: d.z, rot: d.rot, walkable: !!d.walkable, by: me.name,
+      id: crypto.randomUUID(), type: d.type, x: d.x, z: d.z, y: levelOf(d.y || 0) ? UPPER_Y : 0, rot: d.rot, walkable: !!d.walkable, by: me.name,
       aabb: { minX: a.minX, maxX: a.maxX, minZ: a.minZ, maxZ: a.maxZ },
     };
     room.objects.push(item);
@@ -224,8 +229,8 @@ io.on('connection', (socket) => {
 
   socket.on('drag', (d = {}) => {
     const o = findObj(d.id);
-    if (!o || o.lockedBy !== socket.id || !num(d.x, -20, 20) || !num(d.z, -20, 20) || !num(d.rot, -1000, 1000)) return;
-    socket.to(roomName).volatile.emit('dragged', { id: o.id, x: d.x, z: d.z, rot: d.rot });
+    if (!o || o.lockedBy !== socket.id || !num(d.x, -25, 25) || !num(d.z, -25, 25) || !num(d.rot, -1000, 1000)) return;
+    socket.to(roomName).volatile.emit('dragged', { id: o.id, x: d.x, z: d.z, rot: d.rot, y: levelOf(d.y || 0) ? UPPER_Y : 0 });
   });
 
   socket.on('objMove', (d = {}) => {
@@ -235,14 +240,14 @@ io.on('connection', (socket) => {
     const reason = validatePlacement(room, { ...d, type: o.type, walkable: o.walkable }, o.id);
     if (reason) {
       delete o.lockedBy; delete o.lockName;
-      socket.emit('objMoveRejected', { id: o.id, x: o.x, z: o.z, rot: o.rot, reason });
-      socket.to(roomName).emit('unlocked', { id: o.id, x: o.x, z: o.z, rot: o.rot });
+      socket.emit('objMoveRejected', { id: o.id, x: o.x, z: o.z, rot: o.rot, y: o.y || 0, reason });
+      socket.to(roomName).emit('unlocked', { id: o.id, x: o.x, z: o.z, rot: o.rot, y: o.y || 0 });
       return;
     }
     const a = d.aabb;
-    Object.assign(o, { x: d.x, z: d.z, rot: d.rot, aabb: { minX: a.minX, maxX: a.maxX, minZ: a.minZ, maxZ: a.maxZ } });
+    Object.assign(o, { x: d.x, z: d.z, y: levelOf(d.y || 0) ? UPPER_Y : 0, rot: d.rot, aabb: { minX: a.minX, maxX: a.maxX, minZ: a.minZ, maxZ: a.maxZ } });
     delete o.lockedBy; delete o.lockName;
-    socket.to(roomName).emit('objMoved', { id: o.id, x: o.x, z: o.z, rot: o.rot, aabb: o.aabb });
+    socket.to(roomName).emit('objMoved', { id: o.id, x: o.x, z: o.z, y: o.y, rot: o.rot, aabb: o.aabb });
     saveSoon(room);
   });
 
@@ -250,7 +255,7 @@ io.on('connection', (socket) => {
     const o = findObj(d.id);
     if (!o || o.lockedBy !== socket.id) return;
     delete o.lockedBy; delete o.lockName;
-    socket.to(roomName).emit('unlocked', { id: o.id, x: o.x, z: o.z, rot: o.rot });
+    socket.to(roomName).emit('unlocked', { id: o.id, x: o.x, z: o.z, rot: o.rot, y: o.y || 0 });
   });
 
   socket.on('env', (d = {}) => {
@@ -260,10 +265,10 @@ io.on('connection', (socket) => {
     saveSoon(room);
   });
 
-  const POSES = new Set(['stand', 'sit', 'lie', 'floor']);
+  const POSES = new Set(['stand', 'sit', 'lie', 'floor', 'swim']);
   socket.on('move', (d = {}) => {
     if (!room || !num(d.x, -50, 50) || !num(d.z, -50, 50) || !num(d.yaw, -1e6, 1e6) || !num(d.pitch, -2, 2)) return;
-    const y = num(d.y, 0, 3) ? d.y : 0, pose = POSES.has(d.pose) ? d.pose : 'stand', sy = num(d.sy, 0, 2) ? d.sy : 0;
+    const y = num(d.y, -1.5, 7) ? d.y : 0, pose = POSES.has(d.pose) ? d.pose : 'stand', sy = num(d.sy, 0, 5) ? d.sy : 0;
     Object.assign(me, { x: d.x, z: d.z, yaw: d.yaw, pitch: d.pitch, y, pose, sy });
     // volatile = OK to drop if the network is busy; a newer position is coming anyway
     socket.to(roomName).volatile.emit('playerMoved', { id: socket.id, x: d.x, z: d.z, yaw: d.yaw, pitch: d.pitch, y, pose, sy });
