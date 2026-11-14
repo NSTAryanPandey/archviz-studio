@@ -88,6 +88,19 @@
   #netpanel button { border: 0; border-radius: 8px; padding: 5px 10px; background: rgba(99,102,241,.55); color: #fff; font: 600 11px Inter, sans-serif; cursor: pointer; }
   .ndot { width: 8px; height: 8px; border-radius: 50%; background: #10b981; display: inline-block; }
   .ndot.warn { background: #f59e0b; } .ndot.off { background: #6b7280; }
+  .tools { flex-wrap: wrap; justify-content: flex-end; max-width: 62vw; }
+  #emote-bar { position: fixed; left: 50%; bottom: 96px; transform: translateX(-50%) translateY(20px); z-index: 40; padding: 8px; display: flex; gap: 6px; opacity: 0; pointer-events: none; transition: opacity .2s, transform .2s; }
+  #emote-bar.open { opacity: 1; pointer-events: auto; transform: translateX(-50%); }
+  #emote-bar button { border: 0; border-radius: 12px; background: rgba(255,255,255,.06); color: #e5e7eb; font: 500 11px Inter, sans-serif; padding: 8px 10px; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 64px; }
+  #emote-bar button:hover { background: rgba(255,255,255,.14); }
+  #emote-bar span { font-size: 24px; }
+  #emote-bar i { font-style: normal; font-size: 9px; opacity: .5; }
+  body.touch #emote-bar i { display: none; }
+  #hs-banner { position: fixed; left: 50%; top: 84px; transform: translateX(-50%); z-index: 36; padding: 10px 18px; font: 600 14px Inter, sans-serif; display: none; white-space: nowrap; }
+  #hs-blind { position: fixed; inset: 0; z-index: 34; background: rgba(5,6,10,.96); display: none; flex-direction: column; align-items: center; justify-content: center; gap: 10px; color: #e5e7eb; font: 500 16px Inter, sans-serif; pointer-events: none; }
+  #hs-blind b { font-size: 96px; font-weight: 700; color: #fff; }
+  #touch-actions { position: fixed; left: calc(22px + env(safe-area-inset-left)); bottom: 256px; z-index: 35; display: flex; gap: 10px; }
+  #touch-actions button { touch-action: manipulation; width: 50px; height: 50px; border-radius: 50%; border: 1px solid rgba(255,255,255,.12); background: rgba(18,22,32,.72); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); font-size: 22px; color: #fff; }
   #resume { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 25; padding: 14px 22px; font-size: 14px; display: none; pointer-events: none; }
 </style>
 </head>
@@ -118,11 +131,15 @@
     <span class="dot"></span>
     <span id="studio-name" style="font-weight:600;font-size:14px">Studio</span>
     <span class="sep"></span>
-    <span class="hint"><b>WASD</b> move · <b>2-finger swipe</b>/arrows look · <b>Pinch</b> zoom · <b>Tap</b> place · <b>R</b> rotate · <b>E</b> delete · <b>Z X</b>/1-0 pick · <b>N</b> night · <b>T</b> rain · <b>H</b> hide UI · <b>P</b> photo · <b>F</b> fullscreen</span>
+    <span class="hint"><b>WASD</b> move · <b>2-finger swipe</b>/arrows look · <b>Pinch</b> zoom · <b>Tap</b> place · <b>R</b> rotate · <b>E</b> sit · <b>Del</b> delete · <b>Space</b> jump · <b>⇧1-5</b> emotes · <b>K</b> dog · <b>G</b> party · <b>Z X</b>/1-0 pick · <b>N</b> night · <b>T</b> rain · <b>H</b> hide UI · <b>P</b> photo · <b>F</b> fullscreen</span>
   </div>
   <div class="glass tools">
     <span id="fps">-- fps</span>
     <span id="exposure">EV 1.00</span>
+    <button id="btn-emote" title="Emotes (Shift+1…5)">😀</button>
+    <button id="btn-pet" title="Call Bruno the dog (K)">🐶</button>
+    <button id="btn-party" title="Party mode (G)">🪩</button>
+    <button id="btn-hs" title="Hide & seek">🙈</button>
     <button id="btn-fullscreen" title="Fullscreen (F)">⛶</button>
     <button id="btn-daynight" title="Day / Night (N)">🌙</button>
     <button id="btn-weather" title="Rain (T)">🌧️</button>
@@ -134,9 +151,17 @@
 </div>
 
 <div id="netpanel" class="glass"></div>
+<div id="emote-bar" class="glass"></div>
+<div id="hs-banner" class="glass"></div>
+<div id="hs-blind"><div>🙈 You're the seeker</div><b>15</b><div>Close your eyes… everyone is hiding!</div></div>
 
 <div id="touch-ui">
   <div id="joy" class="glass"><div id="joy-knob"></div></div>
+  <div id="touch-actions">
+    <button id="t-jump" title="Jump">🦘</button>
+    <button id="t-sit" title="Sit / interact">🪑</button>
+    <button id="t-emote" title="Emotes">😀</button>
+  </div>
   <div id="touch-btns">
     <button id="t-del" title="Delete what the crosshair points at">🗑️</button>
     <button id="t-move" title="Pick up / cancel moving">✋</button>
@@ -168,6 +193,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 //  only look "right" when sizes are physically plausible.
 // =====================================================================
 const W = 16, D = 12, H = 3, T = 0.2;   // house width, depth, ceiling height, exterior wall thickness
+const GW = 44, GD = 44;                  // the whole plot (house + garden), fenced
 const EYE = 1.65, RADIUS = 0.28;        // eye height and body radius of the visitor
 
 // Multiplayer state (filled in once connected; the game also works fully offline)
@@ -198,6 +224,13 @@ const furnitureTypes = [
   { id: 'bathtub',   name: 'Bathtub',          icon: '🛁' },
   { id: 'toilet',    name: 'Toilet',           icon: '🚽' },
   { id: 'vanity',    name: 'Vanity + Mirror',  icon: '🪞' },
+  { id: 'tree',      name: 'Tree',             icon: '🌳' },
+  { id: 'bush',      name: 'Bush',             icon: '🌿' },
+  { id: 'flowers',   name: 'Flower Bed',       icon: '🌷' },
+  { id: 'bench',     name: 'Garden Bench',     icon: '🪵' },
+  { id: 'lounger',   name: 'Sun Lounger',      icon: '🏖️' },
+  { id: 'parasol',   name: 'Parasol',          icon: '⛱️' },
+  { id: 'gardenlamp', name: 'Garden Lamp',     icon: '🏮' },
 ];
 
 // Real scanned models from Poly Haven (CC0). Procedural versions are used until/unless these load.
@@ -487,6 +520,80 @@ function doorCasing(axis, c, a, b, thick) {
   put(b - a + 2 * w, w, mid, DOOR_H + w / 2);
 }
 
+// ================================================================ the garden
+// Fenced plot around the house: lawn, wooden deck at the front door, stepping-stone path, pool, fence, grass tufts.
+const POOL = { x0: 6, x1: 14, z0: -16.25, z1: -11.75 };
+const DECK = { x0: -2.5, x1: 4, z0: -9.5, z1: -6.2 };
+function buildGarden() {
+  // Lawn (sits 1 cm under the house floor)
+  const grassN = valueNoise(31);
+  const grassTex = genTex(512, 512, true, [GW / 4, GD / 4], (x, y) => {
+    const n = fbm(grassN, x * 0.5, y * 0.5, 4), f = grassN(x * 4, y * 4);
+    return [52 + 30 * n + 12 * f, 92 + 50 * n + 20 * f, 34 + 18 * n];
+  });
+  const lawn = new THREE.Mesh(new THREE.PlaneGeometry(GW, GD), std({ map: grassTex, roughness: 0.95 }));
+  lawn.rotation.x = -Math.PI / 2; lawn.position.y = -0.01; lawn.receiveShadow = true; scene.add(lawn);
+
+  // Wooden deck outside the front door
+  const deckMat = std({ map: grainTex, color: 0x9c7350, roughness: 0.7 });
+  const plankCount = Math.round((DECK.x1 - DECK.x0) / 0.15);
+  for (let i = 0; i < plankCount; i++) {
+    const x = DECK.x0 + 0.075 + i * 0.15;
+    scene.add(box(0.14, 0.06, DECK.z1 - DECK.z0, deckMat, x, 0.02, (DECK.z0 + DECK.z1) / 2));
+  }
+  // Stepping-stone path from the deck to the back of the garden
+  const stoneMat = std({ color: 0xb7b2a8, roughness: 0.85, bumpMap: plasterBump, bumpScale: 1.2 });
+  for (let z = -10.2, i = 0; z > -21; z -= 0.9, i++) {
+    const st = cyl(0.32 + (i % 3) * 0.03, 0.34, 0.05, stoneMat, 0.75 + Math.sin(i * 1.7) * 0.18, 0.015, z, 18);
+    st.scale.z = 0.8; scene.add(st);
+  }
+
+  // Swimming pool: sunken water, tiled walls, stone coping (you can't walk into it)
+  const pw = POOL.x1 - POOL.x0, pd = POOL.z1 - POOL.z0, pcx = (POOL.x0 + POOL.x1) / 2, pcz = (POOL.z0 + POOL.z1) / 2;
+  const poolTile = std({ color: 0x5fb3c9, roughness: 0.3 });
+  scene.add(box(pw, 0.02, pd, poolTile, pcx, -1.2, pcz));                                  // floor
+  for (const [w, d, x, z] of [[pw, 0.05, pcx, POOL.z0], [pw, 0.05, pcx, POOL.z1], [0.05, pd, POOL.x0, pcz], [0.05, pd, POOL.x1, pcz]])
+    scene.add(box(w, 1.2, d, poolTile, x, -0.6, z));
+  const water = new THREE.Mesh(new THREE.PlaneGeometry(pw, pd), new THREE.MeshPhysicalMaterial({ color: 0x3aa6d0, roughness: 0.04, metalness: 0.1, transparent: true, opacity: 0.82, emissive: 0x0b4a66, emissiveIntensity: 0.25 }));
+  water.rotation.x = -Math.PI / 2; water.position.set(pcx, -0.12, pcz); water.receiveShadow = true; scene.add(water);
+  garden.water = water;
+  const coping = std({ color: 0xe8e2d6, roughness: 0.7 });
+  for (const [w, d, x, z] of [[pw + 0.8, 0.4, pcx, POOL.z0 - 0.2], [pw + 0.8, 0.4, pcx, POOL.z1 + 0.2], [0.4, pd, POOL.x0 - 0.2, pcz], [0.4, pd, POOL.x1 + 0.2, pcz]])
+    scene.add(box(w, 0.06, d, coping, x, 0.02, z));
+  STATIC_COLLIDERS.push({ minX: POOL.x0 - 0.1, maxX: POOL.x1 + 0.1, minZ: POOL.z0 - 0.1, maxZ: POOL.z1 + 0.1 });
+
+  // Wooden fence around the plot (instanced posts = 1 draw call)
+  const fenceMat = std({ map: grainTex, color: 0x8a6a4c, roughness: 0.8 });
+  const posts = [];
+  for (let v = -GW / 2; v <= GW / 2; v += 2) posts.push([v, -GD / 2], [v, GD / 2]);
+  for (let v = -GD / 2 + 2; v < GD / 2; v += 2) posts.push([-GW / 2, v], [GW / 2, v]);
+  const postMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(0.1, 1.1, 0.1), fenceMat, posts.length);
+  const m4 = new THREE.Matrix4();
+  posts.forEach(([x, z], i) => { m4.makeTranslation(x, 0.55, z); postMesh.setMatrixAt(i, m4); });
+  postMesh.castShadow = true; scene.add(postMesh);
+  for (const y of [0.45, 0.9]) {
+    scene.add(box(GW, 0.07, 0.04, fenceMat, 0, y, -GD / 2), box(GW, 0.07, 0.04, fenceMat, 0, y, GD / 2));
+    scene.add(box(0.04, 0.07, GD, fenceMat, -GW / 2, y, 0), box(0.04, 0.07, GD, fenceMat, GW / 2, y, 0));
+  }
+
+  // Grass tufts scattered over the lawn (instanced, no shadows → cheap)
+  const tuftGeo = new THREE.ConeGeometry(0.035, 0.2, 3); tuftGeo.translate(0, 0.1, 0);
+  const tuftMat = std({ color: 0x4f8a35, roughness: 0.9 });
+  const TUFTS = 5000, tufts = new THREE.InstancedMesh(tuftGeo, tuftMat, TUFTS), q = new THREE.Quaternion(), sc = new THREE.Vector3(), ps = new THREE.Vector3();
+  const inside = (x, z, r, pad) => x > r.x0 - pad && x < r.x1 + pad && z > r.z0 - pad && z < r.z1 + pad;
+  const HOUSE = { x0: -W / 2 - T, x1: W / 2 + T, z0: -D / 2 - T, z1: D / 2 + T };
+  let n = 0;
+  while (n < TUFTS) {
+    const x = (Math.random() - 0.5) * (GW - 0.6), z = (Math.random() - 0.5) * (GD - 0.6);
+    if (inside(x, z, HOUSE, 0.3) || inside(x, z, POOL, 0.5) || inside(x, z, DECK, 0.1) || (Math.abs(x - 0.75) < 0.6 && z < -9.8)) continue;
+    q.setFromAxisAngle(UP_AXIS, Math.random() * Math.PI); sc.setScalar(0.6 + Math.random() * 0.9); ps.set(x, -0.01, z);
+    m4.compose(ps, q, sc); tufts.setMatrixAt(n++, m4);
+  }
+  scene.add(tufts);
+}
+const garden = {};
+const UP_AXIS = new THREE.Vector3(0, 1, 0);
+
 function buildRoom() {
   const floor = new THREE.Mesh(new THREE.PlaneGeometry(W, D), MAT.floor);
   floor.rotation.x = -Math.PI / 2; floor.receiveShadow = true; scene.add(floor);
@@ -498,10 +605,12 @@ function buildRoom() {
   // Ceiling + exterior walls cast shadows so sunlight only enters through the windows.
   scene.add(box(W + 2 * T, 0.2, D + 2 * T, MAT.ceiling, 0, H + 0.1, 0));
   const winOpenings = (side) => WINDOW_DEFS.filter(w => w.side === side).map(w => ({ a: w.a, b: w.b, y0: w.sill, y1: w.head }));
-  buildWall('x', -D / 2 - T / 2, -W / 2 - T, W / 2 + T, winOpenings('N'));
-  buildWall('x', D / 2 + T / 2, -W / 2 - T, W / 2 + T, winOpenings('S'));
-  buildWall('z', -W / 2 - T / 2, -D / 2, D / 2);
-  buildWall('z', W / 2 + T / 2, -D / 2, D / 2);
+  const FRONT_DOOR = { a: 0.1, b: 1.4, y0: 0, y1: 2.25 };          // front door → garden
+  buildWall('x', -D / 2 - T / 2, -W / 2 - T, W / 2 + T, [...winOpenings('N'), FRONT_DOOR], T, true);
+  doorCasing('x', -D / 2 - T / 2, FRONT_DOOR.a, FRONT_DOOR.b, T);
+  buildWall('x', D / 2 + T / 2, -W / 2 - T, W / 2 + T, winOpenings('S'), T, true);
+  buildWall('z', -W / 2 - T / 2, -D / 2, D / 2, [], T, true);
+  buildWall('z', W / 2 + T / 2, -D / 2, D / 2, [], T, true);
 
   // Interior walls (12 cm) with doorways
   const IT = 0.12, door = (a, b) => ({ a, b, y0: 0, y1: DOOR_H });
@@ -547,7 +656,8 @@ function buildRoom() {
 
   // Skirting + crown moulding around the exterior walls
   const sk = 0.1, st = 0.015, cr = 0.07;
-  scene.add(box(W, sk, st, MAT.trim, 0, sk / 2, D / 2 - st / 2), box(W, sk, st, MAT.trim, 0, sk / 2, -D / 2 + st / 2));
+  scene.add(box(W, sk, st, MAT.trim, 0, sk / 2, D / 2 - st / 2));
+  scene.add(box(8.1, sk, st, MAT.trim, -3.95, sk / 2, -D / 2 + st / 2), box(6.6, sk, st, MAT.trim, 4.7, sk / 2, -D / 2 + st / 2));
   scene.add(box(st, sk, D, MAT.trim, -W / 2 + st / 2, sk / 2, 0), box(st, sk, D, MAT.trim, W / 2 - st / 2, sk / 2, 0));
   scene.add(box(W, cr, cr, MAT.trim, 0, H - cr / 2, D / 2 - cr / 2), box(W, cr, cr, MAT.trim, 0, H - cr / 2, -D / 2 + cr / 2));
   scene.add(box(cr, cr, D, MAT.trim, -W / 2 + cr / 2, H - cr / 2, 0), box(cr, cr, D, MAT.trim, W / 2 - cr / 2, H - cr / 2, 0));
@@ -604,6 +714,7 @@ function buildRoom() {
 }
 const buildingMats = [];
 buildRoom();
+buildGarden();
 
 // ================================================================ lighting
 const sky = new Sky(); sky.scale.setScalar(1500); scene.add(sky);
@@ -613,7 +724,7 @@ skyU.mieDirectionalG.value = 0.8;
 const sunLight = new THREE.DirectionalLight(0xfff1dc, 3.4);
 sunLight.castShadow = true;
 sunLight.shadow.mapSize.set(2048, 2048);
-Object.assign(sunLight.shadow.camera, { left: -12, right: 12, top: 12, bottom: -12, near: 1, far: 80 });
+Object.assign(sunLight.shadow.camera, { left: -16, right: 16, top: 16, bottom: -16, near: 1, far: 90 });
 sunLight.shadow.bias = -0.0003; sunLight.shadow.normalBias = 0.02;
 scene.add(sunLight, sunLight.target);
 
@@ -699,7 +810,8 @@ const warmLow = new THREE.Color(0xffb070), warmHigh = new THREE.Color(0xfff1dc);
 const RAIN = 6000;
 const rainPos = new Float32Array(RAIN * 6), rainEnd = new Float32Array(RAIN * 2);
 for (let i = 0; i < RAIN; i++) {
-  const x = (Math.random() - 0.5) * 80, y = Math.random() * 30, z = (i % 2 ? -1 : 1) * (D / 2 + 0.6 + Math.random() * 55);
+  let x, z; do { x = (Math.random() - 0.5) * 90; z = (Math.random() - 0.5) * 90; } while (Math.abs(x) < W / 2 + 0.6 && Math.abs(z) < D / 2 + 0.6);
+  const y = Math.random() * 30;
   rainPos.set([x, y, z, x, y, z], i * 6); rainEnd[i * 2 + 1] = 1;
 }
 const rainGeo = new THREE.BufferGeometry();
@@ -796,6 +908,74 @@ function buildFurniture(id) {
         l.scale.set(1, 0.6, 1); l.castShadow = true; g.add(l);
       }
       g.add(cyl(0.015, 0.02, 0.7, MAT.walnut, 0, 0.7, 0, 8));
+      break;
+    }
+    case 'tree': {        // trunk collides; the canopy doesn't (walk under it)
+      const bark = std({ color: 0x5b4130, roughness: 0.95, bumpMap: plasterBump, bumpScale: 2 });
+      g.add(cyl(0.14, 0.2, 2.2, bark, 0, 1.1, 0, 12));
+      const canopy = new THREE.Group(); canopy.userData.noCollide = true; g.add(canopy);
+      const tones = [0x3f7a35, 0x4c8a3c, 0x356b2e, 0x5a9444];
+      for (let i = 0; i < 7; i++) {
+        const leaf = std({ color: tones[i % tones.length], roughness: 0.85 });
+        const r = 0.9 + Math.random() * 0.5, a = (i / 7) * Math.PI * 2;
+        const m = new THREE.Mesh(new THREE.IcosahedronGeometry(r, 2), leaf);
+        m.position.set(Math.cos(a) * 0.7 * (i ? 1 : 0), 2.9 + Math.random() * 0.9, Math.sin(a) * 0.7 * (i ? 1 : 0));
+        m.castShadow = true; m.receiveShadow = true; canopy.add(m);
+      }
+      break;
+    }
+    case 'bush': {
+      const leaf = std({ color: 0x447d38, roughness: 0.9 });
+      for (let i = 0; i < 6; i++) {
+        const m = new THREE.Mesh(new THREE.IcosahedronGeometry(0.35 + Math.random() * 0.15, 1), leaf);
+        const a = (i / 6) * Math.PI * 2; m.position.set(Math.cos(a) * 0.3, 0.38 + Math.random() * 0.25, Math.sin(a) * 0.3);
+        m.castShadow = true; m.receiveShadow = true; g.add(m);
+      }
+      break;
+    }
+    case 'flowers': {     // soil bed + stems + coloured blooms, merged into 3 meshes
+      g.add(rbox(1.6, 0.18, 0.6, MAT.walnut, 0, 0.09, 0, 0.02));
+      g.add(rbox(1.5, 0.04, 0.5, std({ color: 0x3b2a1e, roughness: 1 }), 0, 0.17, 0, 0.01, 1));
+      const stems = [], blooms = [], cols = [0xe0435a, 0xf2c94c, 0xf7f3ee, 0xb565d9, 0xff8c42];
+      for (let i = 0; i < 26; i++) {
+        const x = (Math.random() - 0.5) * 1.35, z = (Math.random() - 0.5) * 0.38, h = 0.18 + Math.random() * 0.2;
+        const st = new THREE.CylinderGeometry(0.006, 0.006, h, 5); st.translate(x, 0.19 + h / 2, z); stems.push(st);
+        const bl = new THREE.IcosahedronGeometry(0.035 + Math.random() * 0.02, 1); bl.translate(x, 0.19 + h, z);
+        const c = new THREE.Color(cols[i % cols.length]), n = bl.attributes.position.count, a = new Float32Array(n * 3);
+        for (let j = 0; j < n; j++) { a[j * 3] = c.r; a[j * 3 + 1] = c.g; a[j * 3 + 2] = c.b; }
+        bl.setAttribute('color', new THREE.BufferAttribute(a, 3)); blooms.push(bl);
+      }
+      g.add(new THREE.Mesh(mergeGeometries(stems), std({ color: 0x3e7a2f, roughness: 0.8 })));
+      const bm = new THREE.Mesh(mergeGeometries(blooms), std({ vertexColors: true, roughness: 0.6 })); bm.castShadow = true; g.add(bm);
+      break;
+    }
+    case 'bench': {
+      for (let i = 0; i < 4; i++) g.add(rbox(1.5, 0.035, 0.1, MAT.oak, 0, 0.45, -0.18 + i * 0.12, 0.01));
+      for (let i = 0; i < 3; i++) { const b = rbox(1.5, 0.09, 0.03, MAT.oak, 0, 0.62 + i * 0.12, -0.27, 0.01); b.rotation.x = -0.15; g.add(b); }
+      for (const sx of [-0.65, 0.65]) { g.add(rbox(0.05, 0.45, 0.45, MAT.blackMetal, sx, 0.225, 0, 0.01)); g.add(rbox(0.05, 0.45, 0.05, MAT.blackMetal, sx, 0.68, -0.25, 0.01)); }
+      break;
+    }
+    case 'lounger': {
+      g.add(rbox(0.68, 0.08, 1.9, MAT.oak, 0, 0.32, 0.05, 0.02));
+      g.add(rbox(0.6, 0.06, 1.25, MAT.linen, 0, 0.39, 0.35, 0.03));
+      const back = rbox(0.6, 0.06, 0.65, MAT.linen, 0, 0.55, -0.62, 0.03); back.rotation.x = 0.55; g.add(back);
+      for (const sx of [-0.28, 0.28]) for (const sz of [-0.8, 0.9]) g.add(rbox(0.05, 0.3, 0.05, MAT.oak, sx, 0.15, sz, 0.01));
+      break;
+    }
+    case 'parasol': {
+      g.add(cyl(0.3, 0.32, 0.08, MAT.stone, 0, 0.04, 0, 24));
+      g.add(cyl(0.025, 0.025, 2.4, MAT.oak, 0, 1.2, 0, 10));
+      const canopy = new THREE.Mesh(new THREE.ConeGeometry(1.4, 0.5, 12, 1, true), new THREE.MeshPhysicalMaterial({ color: 0xf2ece0, roughness: 0.9, sheen: 1, side: THREE.DoubleSide }));
+      canopy.position.y = 2.35; canopy.userData.noCollide = true; canopy.castShadow = true; g.add(canopy);
+      break;
+    }
+    case 'gardenlamp': {
+      g.add(cyl(0.12, 0.14, 0.06, MAT.blackMetal, 0, 0.03, 0, 16));
+      g.add(cyl(0.03, 0.03, 0.9, MAT.blackMetal, 0, 0.48, 0, 10));
+      const globe = new THREE.Mesh(new THREE.SphereGeometry(0.13, 20, 14), std({ color: 0xfff4e0, emissive: 0xffd9a0, emissiveIntensity: 2.2, roughness: 0.4 }));
+      globe.position.y = 1.05; g.add(globe);
+      const anchor = new THREE.Object3D(); anchor.position.set(0, 1.05, 0); g.add(anchor);
+      g.userData.lightSpec = { anchor, color: 0xffcf8a, intensity: 2.2, shadow: false, quiet: true };
       break;
     }
     case 'kitchen': {   // 3 m counter run: base cabinets, stone top, sink, cooktop, wall cabinets
@@ -987,12 +1167,25 @@ function buildFurniture(id) {
 
 // ================================================================ placement
 const placed = [], flickers = [];
-const aabbOf = (obj) => { obj.updateMatrixWorld(true); const b = new THREE.Box3().setFromObject(obj); return { minX: b.min.x, maxX: b.max.x, minZ: b.min.z, maxZ: b.max.z }; };
+// Footprint used for collisions: ignores parts marked noCollide (tree foliage, parasol canopy) so you can walk under them
+const aabbOf = (obj) => {
+  obj.updateMatrixWorld(true);
+  const b = new THREE.Box3(), tmp = new THREE.Box3();
+  obj.traverse(o => {
+    if (!o.isMesh || o.userData.noCollide) return;
+    let p = o.parent, skip = false; while (p && p !== obj) { if (p.userData.noCollide) skip = true; p = p.parent; }
+    if (skip) return;
+    if (!o.geometry.boundingBox) o.geometry.computeBoundingBox();
+    tmp.copy(o.geometry.boundingBox).applyMatrix4(o.matrixWorld); b.union(tmp);
+  });
+  if (b.isEmpty()) b.setFromObject(obj);
+  return { minX: b.min.x, maxX: b.max.x, minZ: b.min.z, maxZ: b.max.z };
+};
 const overlap = (a, b, m = 0.01) => a.minX < b.maxX - m && a.maxX > b.minX + m && a.minZ < b.maxZ - m && a.maxZ > b.minZ + m;
 
 function isValid(obj, ignore = null) {
   const a = aabbOf(obj);
-  if (a.minX < -W / 2 - 0.001 || a.maxX > W / 2 + 0.001 || a.minZ < -D / 2 - 0.001 || a.maxZ > D / 2 + 0.001) return false;
+  if (a.minX < -GW / 2 + 0.05 || a.maxX > GW / 2 - 0.05 || a.minZ < -GD / 2 + 0.05 || a.maxZ > GD / 2 - 0.05) return false;
   if (STATIC_COLLIDERS.some(w => overlap(a, w))) return false;      // can't push things through walls
   if (obj.userData.walkable) return true;
   const p = camera.position;
@@ -1012,7 +1205,7 @@ function placeItem(id, x, z, rot, opts = {}) {
   if (spec) {
     const l = acquireLight(spec.shadow);
     if (l) { spec.anchor.getWorldPosition(l.position); l.color.set(spec.color); l.intensity = spec.intensity; g.userData.light = l; }
-    else if (started) flashHint('Light limit reached: this one stays unlit', 2000);
+    else if (started && !spec.quiet) flashHint('Light limit reached: this one stays unlit', 2000);
   }
   if (g.userData.flames && g.userData.light) flickers.push(g);
   scene.add(g); placed.push(g);
@@ -1206,7 +1399,7 @@ function stageRoom() {
   userPlace('table', -1.2, -4.2, 0, NOREC);
   userPlace('chair', -1.6, -3.5, P, NOREC); userPlace('chair', -0.8, -3.5, P, NOREC);
   userPlace('chair', -1.6, -4.9, 0, NOREC); userPlace('chair', -0.8, -4.9, 0, NOREC);
-  userPlace('plant', 1.6, -5.6, 0.8, NOREC);
+  userPlace('plant', -0.2, -5.6, 0.8, NOREC);
   // Kitchen
   userPlace('kitchen', 7.67, -3.2, E, NOREC);
   userPlace('fridge', 7.64, -0.6, E, NOREC);
@@ -1228,6 +1421,17 @@ function stageRoom() {
   userPlace('toilet', 7.6, 3.4, E, NOREC);
   userPlace('vanity', 3.82, 3.0, Wt, NOREC);
   userPlace('plant', 3.9, 5.6, 2.2, NOREC);
+  // Garden
+  for (const [x, z] of [[-17, -17], [-18, -4], [-17, 9], [-6, 17], [7, 18], [17, 7], [18, -6], [17.5, -18.5], [-9, -18]]) userPlace('tree', x, z, Math.random() * 6, NOREC);
+  for (const [x, z] of [[-7.4, -6.9], [-4.0, -6.9], [7.4, -6.9], [-8.9, 0], [8.9, 3], [-8.9, -4]]) userPlace('bush', x, z, Math.random() * 6, NOREC);
+  userPlace('flowers', -5.75, -6.75, 0, NOREC);
+  userPlace('flowers', 5.4, -6.75, 0, NOREC);
+  userPlace('lounger', 7.5, -9.6, P, NOREC);
+  userPlace('lounger', 9.5, -9.6, P, NOREC);
+  userPlace('parasol', 8.5, -9.4, 0, NOREC);
+  userPlace('bench', -12, -10, Wt, NOREC);
+  userPlace('bench', 0.75, -19.5, 0, NOREC);
+  for (const [x, z] of [[-0.3, -11.5], [1.8, -11.5], [-0.3, -15.5], [1.8, -15.5]]) userPlace('gardenlamp', x, z, 0, NOREC);
 }
 
 // ---------------------------------------------------------------- real models
@@ -1310,7 +1514,7 @@ function updateHover() {
   if (hovered && !carry) {
     const t = furnitureTypes.find(f => f.id === hovered.userData.id);
     hoverLabel.textContent = hovered.userData.lockedBy ? `🔒 ${hovered.userData.lockedBy} is moving this`
-      : isTouch ? `${t.icon} ${t.name} — ✋ move · 🗑️ delete` : `${t.icon} ${t.name} — click to move · E delete`;
+      : isTouch ? `${t.icon} ${t.name} — ${SEATS[t.id] ? '🪑 sit · ' : ''}✋ move · 🗑️ delete` : `${t.icon} ${t.name} — ${SEATS[t.id] ? 'E sit · ' : ''}click move · Del delete`;
     hoverLabel.style.display = 'block';
     if (look.locked || isTouch) { hoverLabel.style.left = '50%'; hoverLabel.style.top = 'calc(50% + 22px)'; }
     else { hoverLabel.style.left = mousePx.x + 'px'; hoverLabel.style.top = (mousePx.y + 24) + 'px'; }
@@ -1321,7 +1525,7 @@ function updateHover() {
 const keys = {}, vel = new THREE.Vector3(), wish = new THREE.Vector3(), fwd = new THREE.Vector3(), right = new THREE.Vector3(), UP = new THREE.Vector3(0, 1, 0);
 let bobT = 0;
 function blocked(x, z) {
-  if (x < -W / 2 + RADIUS || x > W / 2 - RADIUS || z < -D / 2 + RADIUS || z > D / 2 - RADIUS) return true;
+  if (x < -GW / 2 + RADIUS || x > GW / 2 - RADIUS || z < -GD / 2 + RADIUS || z > GD / 2 - RADIUS) return true;
   for (const c of STATIC_COLLIDERS) if (x > c.minX - RADIUS && x < c.maxX + RADIUS && z > c.minZ - RADIUS && z < c.maxZ + RADIUS) return true;
   for (const o of placed) {
     if (o.userData.walkable || (carry && o === carry.g)) continue;
@@ -1339,6 +1543,16 @@ function updateMovement(dt) {
   const turn = active ? (keys.ArrowLeft ? 1 : 0) - (keys.ArrowRight ? 1 : 0) : 0;
   const tilt = active ? (keys.ArrowUp ? 1 : 0) - (keys.ArrowDown ? 1 : 0) : 0;
   if (turn || tilt) { look.yaw += turn * 1.8 * dt; look.pitch = THREE.MathUtils.clamp(look.pitch + tilt * 1.2 * dt, -1.45, 1.45); applyLook(); }
+  // Sitting / lying: the camera stays on the seat; any movement stands you up
+  if (me.sit || me.pose === 'floor' || hsFrozen()) {
+    if ((f || r) && !hsFrozen()) standUp();
+    else {
+      vel.set(0, 0, 0);
+      if (me.sit) { if (!placed.includes(me.sit.g)) standUp(); else { sitCameraPos(camera.position); return; } }
+      if (me.pose === 'floor') { camera.position.y = EYE - 0.85; return; }
+      if (hsFrozen()) { camera.position.y = EYE; return; }
+    }
+  }
   camera.getWorldDirection(fwd); fwd.y = 0; fwd.normalize();     // walk on the floor, never fly
   right.crossVectors(fwd, UP).normalize();
   wish.set(0, 0, 0).addScaledVector(fwd, f).addScaledVector(right, r);
@@ -1350,11 +1564,13 @@ function updateMovement(dt) {
   const stuck = blocked(camera.position.x, camera.position.z);
   const nx = camera.position.x + vel.x * dt; if (stuck || !blocked(nx, camera.position.z)) camera.position.x = nx; else vel.x = 0;
   const nz = camera.position.z + vel.z * dt; if (stuck || !blocked(camera.position.x, nz)) camera.position.z = nz; else vel.z = 0;
-  camera.position.x = THREE.MathUtils.clamp(camera.position.x, -W / 2 + RADIUS, W / 2 - RADIUS);
-  camera.position.z = THREE.MathUtils.clamp(camera.position.z, -D / 2 + RADIUS, D / 2 - RADIUS);
+  camera.position.x = THREE.MathUtils.clamp(camera.position.x, -GW / 2 + RADIUS, GW / 2 - RADIUS);
+  camera.position.z = THREE.MathUtils.clamp(camera.position.z, -GD / 2 + RADIUS, GD / 2 - RADIUS);
   const s = Math.min(vel.length() / 2.4, 1.6);
   bobT += dt * s * 9;
-  camera.position.y = EYE + Math.sin(bobT) * 0.022 * Math.min(s, 1);
+  // Jumping: simple gravity
+  if (me.vy !== 0 || me.jy > 0) { me.vy -= 12 * dt; me.jy = Math.max(0, me.jy + me.vy * dt); if (me.jy === 0) me.vy = 0; }
+  camera.position.y = EYE + me.jy + Math.sin(bobT) * 0.022 * Math.min(s, 1) * (me.jy > 0 ? 0 : 1);
 }
 
 // ================================================================ environment state
@@ -1369,7 +1585,7 @@ function applyLighting() {
   skyU.mieCoefficient.value = THREE.MathUtils.lerp(0.004, 0.02, rainMix);
   const dayK = sstep(elev, -4, 8);
   const gloom = 1 - 0.85 * rainMix;
-  sunLight.position.copy(dir).multiplyScalar(30);
+  sunLight.position.copy(dir).multiplyScalar(30).add(sunLight.target.position);
   sunLight.intensity = 3.4 * dayK * gloom;
   sunLight.color.copy(warmLow).lerp(warmHigh, sstep(elev, 2, 25));
   // Before the first room snapshot exists, use the generic studio environment scaled by daylight.
@@ -1441,11 +1657,11 @@ function buildInventoryUI() {
 function select(i) { selected = (i + furnitureTypes.length) % furnitureTypes.length; buildInventoryUI(); rebuildGhost(); }
 const btnNight = document.getElementById('btn-daynight'), btnRain = document.getElementById('btn-weather'), btnQ = document.getElementById('btn-quality');
 const expLabel = document.getElementById('exposure');
-function setEnvUI() { btnNight.textContent = todTarget ? '☀️' : '🌙'; btnRain.classList.toggle('on', !!rainTarget); setRainAudio(!!rainTarget); }
-function sendEnv() { if (net.online) net.socket.emit('env', { night: todTarget, rain: rainTarget }); }
+function setEnvUI() { btnNight.textContent = todTarget ? '☀️' : '🌙'; btnRain.classList.toggle('on', !!rainTarget); setRainAudio(!!rainTarget); document.getElementById('btn-party').classList.toggle('on', !!partyOn); setPartyAudio(!!partyOn); }
+function sendEnv() { if (net.online) net.socket.emit('env', { night: todTarget, rain: rainTarget, party: partyOn }); }
 function toggleNight() { todTarget = todTarget ? 0 : 1; setEnvUI(); sendEnv(); }
 function toggleRain() { rainTarget = rainTarget ? 0 : 1; setEnvUI(); sendEnv(); }
-function applyRemoteEnv(env) { if (!env) return; todTarget = env.night ? 1 : 0; rainTarget = env.rain ? 1 : 0; setEnvUI(); }
+function applyRemoteEnv(env) { if (!env) return; todTarget = env.night ? 1 : 0; rainTarget = env.rain ? 1 : 0; partyOn = env.party ? 1 : 0; setEnvUI(); }
 
 // Quality presets (Q cycles; the game also auto-drops a preset if FPS stays low)
 const QUALITY = [
@@ -1506,6 +1722,7 @@ document.addEventListener('pointerlockerror', lockUnavailable);
 window.addEventListener('blur', () => Object.keys(keys).forEach(k => keys[k] = false));
 
 function primaryAction(button) {
+  if (button === 0 && hsTryTag()) return;
   if (button === 0) {
     if (carry) dropCarry();                                        // click while carrying = drop
     else if (hovered) pickUp(hovered);                             // click on furniture = pick it up
@@ -1525,7 +1742,12 @@ document.addEventListener('keydown', (e) => {
   if ((e.metaKey || e.ctrlKey) && e.code === 'KeyZ') { e.preventDefault(); if (e.shiftKey) redo(); else undo(); return; }
   if ((e.metaKey || e.ctrlKey) && e.code === 'KeyY') { e.preventDefault(); redo(); return; }
   if (e.code === 'Escape' && carry) cancelCarry();
-  if (e.code === 'KeyE' || e.code === 'Delete' || e.code === 'Backspace') { if (carry) userRemove(carry.g); else if (hovered) userRemove(hovered); }
+  if (e.code === 'Delete' || e.code === 'Backspace') { if (carry) userRemove(carry.g); else if (hovered) userRemove(hovered); }
+  if (e.code === 'KeyE') interact();
+  if (e.code === 'Space') { e.preventDefault(); jump(); }
+  if (e.code === 'KeyK') callPet();
+  if (e.code === 'KeyG') toggleParty();
+  if (e.shiftKey && /^Digit[1-5]$/.test(e.code)) { doEmote(EMOTES[+e.code.slice(5) - 1].id); return; }
   if (e.code === 'KeyN') toggleNight();
   if (e.code === 'KeyT') toggleRain();
   if (e.code === 'KeyQ') toggleQuality();
@@ -1690,6 +1912,338 @@ function setupTouch() {
 }
 if (isTouch) setupTouch();
 
+// ================================================================ fun: sit, jump, emotes, party, pet, hide & seek
+// ---- local player state
+const me = { jy: 0, vy: 0, pose: 'stand', sit: null };
+const SEATS = {
+  sofa: { y: 0.5, spots: [[-0.62, 0.12], [0, 0.12], [0.62, 0.12]] },
+  chair: { y: 0.5, spots: [[0, 0.03]] },
+  armchair: { y: 0.47, spots: [[0, 0.08]] },
+  bench: { y: 0.47, spots: [[-0.45, 0.02], [0.45, 0.02]] },
+  bed: { lie: true, y: 0.62, spots: [[-0.4, 0.15], [0.4, 0.15]] },
+  lounger: { lie: true, y: 0.42, spots: [[0, 0.1]] },
+};
+const _v = new THREE.Vector3();
+function trySit(g) {
+  const seat = g && SEATS[g.userData.id];
+  if (!seat) return false;
+  g.updateMatrixWorld(true);
+  let best = null, bd = Infinity;
+  for (const [lx, lz] of seat.spots) {
+    const wp = new THREE.Vector3(lx, seat.y, lz).applyMatrix4(g.matrixWorld);
+    const d = Math.hypot(wp.x - camera.position.x, wp.z - camera.position.z);
+    if (d < bd) { bd = d; best = wp; }
+  }
+  if (bd > 3) { flashHint('Get a bit closer to sit', 1200); return true; }
+  if (carry) cancelCarry(false);
+  const front = new THREE.Vector3(Math.sin(g.rotation.y), 0, Math.cos(g.rotation.y));   // furniture faces its local +Z
+  me.sit = { g, lie: !!seat.lie, pos: best, front, yaw: g.rotation.y + Math.PI, pre: camera.position.clone() };
+  me.pose = seat.lie ? 'lie' : 'sit'; me.jy = 0; me.vy = 0; vel.set(0, 0, 0);
+  look.yaw = me.sit.yaw; look.pitch = seat.lie ? 0.45 : -0.05; applyLook();
+  flashHint(seat.lie ? 'Lying down 😴 — move to get up' : 'Sitting 🪑 — move to stand up', 1800);
+  return true;
+}
+function sitCameraPos(out) {
+  const st = me.sit;
+  if (st.lie) return out.copy(st.pos).addScaledVector(st.front, -0.75).setY(st.pos.y + 0.28);   // head at the back, looking at the feet
+  return out.copy(st.pos).addScaledVector(st.front, -0.05).setY(st.pos.y + 0.72);
+}
+function standUp() {
+  if (me.sit) { camera.position.x = me.sit.pre.x; camera.position.z = me.sit.pre.z; }
+  me.sit = null; me.pose = 'stand';
+}
+function jump() {
+  if (me.sit || me.pose === 'floor') { standUp(); return; }
+  if (me.jy === 0 && !hsFrozen()) me.vy = 4.3;
+}
+function interact() {
+  if (hsTryTag()) return;
+  if (me.sit || me.pose === 'floor') { standUp(); return; }
+  if (hovered && trySit(hovered)) return;
+  flashHint(isTouch ? 'Aim the dot at a sofa, chair, bench or bed' : 'Look at a sofa, chair, bench or bed to sit', 1500);
+}
+// Where others should see me (sent with every position update)
+function myPose() {
+  const p = camera.position;
+  if (me.sit) {
+    const st = me.sit;
+    if (st.lie) { _v.copy(st.pos).addScaledVector(st.front, 0.85); return { x: _v.x, z: _v.z, yaw: st.yaw, pose: 'lie', sy: st.pos.y }; }
+    return { x: st.pos.x, z: st.pos.z, yaw: st.yaw, pose: 'sit', sy: st.pos.y };
+  }
+  return { x: p.x, z: p.z, yaw: look.yaw, pose: me.pose, sy: 0 };
+}
+
+// ---- emotes
+const EMOTES = [
+  { id: 'wave', icon: '👋', name: 'Wave', dur: 2.5 },
+  { id: 'dance', icon: '💃', name: 'Dance', dur: 6 },
+  { id: 'jump', icon: '🦘', name: 'Jump', dur: 1 },
+  { id: 'sit', icon: '🧘', name: 'Sit down', dur: 0 },
+  { id: 'clap', icon: '👏', name: 'Clap', dur: 2.5 },
+];
+const emojiTexCache = {};
+function emojiSprite(emoji, size = 0.36) {
+  if (!emojiTexCache[emoji]) {
+    const c = document.createElement('canvas'); c.width = c.height = 128; const x = c.getContext('2d');
+    x.font = '96px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif'; x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillText(emoji, 64, 70);
+    const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; emojiTexCache[emoji] = t;
+  }
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: emojiTexCache[emoji], transparent: true, depthWrite: false }));
+  sp.scale.set(size, size, 1); sp.renderOrder = 11; return sp;
+}
+function doEmote(id) {
+  const e = EMOTES.find(x => x.id === id); if (!e || !started) return;
+  if (id === 'jump') jump();
+  else if (id === 'sit') { if (me.sit) standUp(); me.pose = 'floor'; vel.set(0, 0, 0); }
+  else if (me.sit && id === 'dance') standUp();
+  if (net.online) net.socket.emit('emote', { type: id });
+  flashHint(`${e.icon} ${e.name}${id === 'sit' ? ' — move to get up' : ''}`, 1200);
+  document.getElementById('emote-bar').classList.remove('open');
+}
+function showRemoteEmote(p, id) {
+  const e = EMOTES.find(x => x.id === id); if (!e) return;
+  p.emote = { id, t0: clock.elapsedTime, dur: e.dur };
+  const sp = emojiSprite(e.icon, 0.42); sp.position.y = (p.avatar === 'girl' ? 1.95 : 2.02) + 0.38; p.group.add(sp);
+  setTimeout(() => { p.group.remove(sp); sp.material.dispose(); }, 2200);
+}
+
+// ---- party mode: disco ball, colour-cycling lights, music, everyone dances
+let partyOn = 0, partyMix = 0, partyMusic = null, partyPlaying = false;
+const PARTY_POS = new THREE.Vector3(-4, H - 0.55, -2.4);
+const discoBall = new THREE.Group();
+{
+  const ball = new THREE.Mesh(new THREE.IcosahedronGeometry(0.22, 2), new THREE.MeshStandardMaterial({ color: 0xffffff, metalness: 1, roughness: 0.12, flatShading: true }));
+  discoBall.add(ball, cyl(0.004, 0.004, 0.5, MAT.blackMetal, 0, 0.36, 0, 4));
+  discoBall.position.copy(PARTY_POS); discoBall.visible = false; scene.add(discoBall);
+}
+const partySpots = [0, 1, 2].map(i => {
+  const s = new THREE.SpotLight(0xff00ff, 0, 0, 0.32, 0.5, 2);
+  s.position.copy(PARTY_POS); scene.add(s, s.target); return s;
+});
+function setupPartyMusic() {
+  if (partyMusic || typeof Tone === 'undefined') return;
+  try {
+    const out = new Tone.Volume(-6).toDestination();
+    const kick = new Tone.MembraneSynth({ volume: -6 }).connect(out);
+    const hat = new Tone.NoiseSynth({ noise: { type: 'white' }, envelope: { attack: 0.001, decay: 0.05, sustain: 0 }, volume: -24 }).connect(out);
+    const bass = new Tone.MonoSynth({ oscillator: { type: 'square' }, envelope: { attack: 0.01, decay: 0.2, sustain: 0.3, release: 0.2 }, filterEnvelope: { attack: 0.01, decay: 0.15, sustain: 0.2, baseFrequency: 200, octaves: 2.5 }, volume: -16 }).connect(out);
+    const pad = new Tone.PolySynth(Tone.Synth, { oscillator: { type: 'triangle' }, envelope: { attack: 0.02, decay: 0.3, sustain: 0.2, release: 0.8 }, volume: -22 }).connect(out);
+    const bassNotes = ['A1', 'A1', 'C2', 'A1', 'F1', 'F1', 'G1', 'G1'];
+    const chords = [['A3', 'C4', 'E4'], ['F3', 'A3', 'C4'], ['C4', 'E4', 'G4'], ['G3', 'B3', 'D4']];
+    let step = 0;
+    const loop = new Tone.Loop((time) => {
+      const s16 = step % 16;
+      if (s16 % 4 === 0) kick.triggerAttackRelease('C1', '8n', time);
+      if (s16 % 4 === 2) hat.triggerAttackRelease('16n', time);
+      if (s16 % 2 === 0) bass.triggerAttackRelease(bassNotes[Math.floor(step / 2) % 8], '8n', time);
+      if (s16 === 0) pad.triggerAttackRelease(chords[Math.floor(step / 16) % 4], '2n', time);
+      step++;
+    }, '16n');
+    Tone.Transport.bpm.value = 118;
+    partyMusic = { loop };
+  } catch (e) { partyMusic = null; }
+}
+function setPartyAudio(on) {
+  if (typeof Tone === 'undefined') return;
+  try {
+    if (on && !partyPlaying) { setupPartyMusic(); if (partyMusic) { partyMusic.loop.start(0); Tone.Transport.start(); partyPlaying = true; } }
+    else if (!on && partyPlaying && partyMusic) { partyMusic.loop.stop(); Tone.Transport.stop(); partyPlaying = false; }
+  } catch (e) { /* audio is optional */ }
+}
+function toggleParty() { partyOn = partyOn ? 0 : 1; setEnvUI(); sendEnv(); flashHint(partyOn ? '🪩 Party time!' : 'Party over', 1500); }
+function updateParty(dt, t) {
+  partyMix += (partyOn - partyMix) * (1 - Math.exp(-3 * dt));
+  const on = partyMix > 0.01;
+  discoBall.visible = on;
+  if (on) discoBall.rotation.y += dt * 1.2;
+  partySpots.forEach((s, i) => {
+    s.intensity = 30 * partyMix;
+    s.color.setHSL((t * 0.15 + i / 3) % 1, 1, 0.55);
+    const a = t * (0.7 + i * 0.25) + i * 2.1;
+    s.target.position.set(PARTY_POS.x + Math.cos(a) * 3, 0, PARTY_POS.z + Math.sin(a * 1.3) * 2.5);
+  });
+  if (on) {
+    downlights.forEach((s, i) => { s.color.setHSL((t * 0.2 + i * 0.13) % 1, 1, 0.6); s.intensity = THREE.MathUtils.lerp(s.intensity, 9, partyMix); });
+    MAT.downlight.emissive.setHSL((t * 0.2) % 1, 1, 0.6);
+    scene.environmentIntensity *= 1 - 0.55 * partyMix;
+  } else {
+    downlights.forEach(s => s.color.setHex(0xffd6aa)); MAT.downlight.emissive.setHex(0xffe2c0);
+  }
+}
+
+// ---- Bruno the dog: follows whoever called him, naps on a rug when nobody's around
+function makeDog() {
+  const g = new THREE.Group(), body = new THREE.Group(); g.add(body);
+  const fur = new THREE.MeshPhysicalMaterial({ color: 0xc8914f, roughness: 0.8, sheen: 1, sheenColor: 0xf3cf98 });
+  const furDark = new THREE.MeshPhysicalMaterial({ color: 0x8a5a2e, roughness: 0.85, sheen: 1 });
+  const dark = std({ color: 0x1e140d, roughness: 0.4 });
+  const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.15, 0.42, 6, 14), fur); torso.rotation.x = Math.PI / 2; torso.position.y = 0.42; body.add(torso);
+  const head = new THREE.Group(); head.position.set(0, 0.6, -0.33); body.add(head);
+  head.add(new THREE.Mesh(new THREE.SphereGeometry(0.13, 20, 14), fur));
+  const snout = rbox(0.11, 0.09, 0.15, fur, 0, -0.035, -0.13, 0.04); head.add(snout);
+  const nose = new THREE.Mesh(new THREE.SphereGeometry(0.026, 12, 8), dark); nose.position.set(0, -0.015, -0.21); head.add(nose);
+  for (const ex of [-0.055, 0.055]) { const e = new THREE.Mesh(new THREE.SphereGeometry(0.018, 10, 8), dark); e.position.set(ex, 0.04, -0.105); head.add(e); }
+  for (const s of [-1, 1]) { const ear = rbox(0.06, 0.15, 0.03, furDark, s * 0.11, -0.01, 0.02, 0.02); ear.rotation.z = s * 0.25; head.add(ear); }
+  const legs = [];
+  for (const [lx, lz] of [[-0.09, -0.2], [0.09, -0.2], [-0.09, 0.2], [0.09, 0.2]]) {
+    const leg = new THREE.Group(); leg.position.set(lx, 0.36, lz);
+    leg.add(cyl(0.038, 0.034, 0.34, fur, 0, -0.17, 0, 8));
+    const paw = new THREE.Mesh(new THREE.SphereGeometry(0.042, 10, 8), fur); paw.position.y = -0.34; leg.add(paw);
+    body.add(leg); legs.push(leg);
+  }
+  const tail = new THREE.Group(); tail.position.set(0, 0.5, 0.32); body.add(tail);
+  const tm = cyl(0.025, 0.012, 0.3, fur, 0, 0.15, 0, 8); tail.add(tm); tail.rotation.x = 0.7;
+  const zzz = emojiSprite('💤', 0.3); zzz.position.set(0, 0.85, -0.1); zzz.visible = false; g.add(zzz);
+  const tag = makeNameTag('🐶 Bruno', 0xc8914f); tag.scale.set(0.6, 0.15, 1); tag.position.y = 1.05; g.add(tag);
+  g.traverse(o => { if (o.isMesh) { o.castShadow = false; o.receiveShadow = true; } });
+  g.userData = { body, head, legs, tail, zzz, tag };
+  return g;
+}
+const pet = { g: null, x: -4.6, z: -0.9, yaw: 0, targetId: null, targetName: '', walk: 0, phase: 0, stuckT: 0, lastSeen: { x: 0, z: 0, t: 0 }, sleeping: true };
+function initPet() { pet.g = makeDog(); pet.g.position.set(pet.x, 0, pet.z); scene.add(pet.g); }
+function petTargetPos() {
+  if (!pet.targetId) return null;
+  if (pet.targetId === 'me' || pet.targetId === net.myId) return camera.position;
+  const p = players.get(pet.targetId); return p ? p.group.position : null;
+}
+function petBlocked(x, z) {
+  const R = 0.22;
+  if (x < -GW / 2 + R || x > GW / 2 - R || z < -GD / 2 + R || z > GD / 2 - R) return true;
+  for (const c of STATIC_COLLIDERS) if (x > c.minX - R && x < c.maxX + R && z > c.minZ - R && z < c.maxZ + R) return true;
+  return false;
+}
+function callPet() {
+  if (net.online) { net.socket.emit('pet:call'); return; }
+  setPetTarget(pet.targetId === 'me' ? null : 'me', myName);
+}
+function setPetTarget(id, name) {
+  pet.targetId = id; pet.targetName = name || ''; pet.lastSeen = { x: 1e9, z: 1e9, t: 0 };
+  if (id) { flashHint(`🐶 Bruno is running to ${id === 'me' || id === net.myId ? 'you' : name}!`, 1800); bark(); }
+  else flashHint('🐶 Bruno is going for a nap', 1500);
+}
+let barkSynth = null;
+function bark() {
+  if (typeof Tone === 'undefined') return;
+  try {
+    if (!barkSynth) barkSynth = new Tone.MembraneSynth({ pitchDecay: 0.03, octaves: 3, envelope: { attack: 0.001, decay: 0.12, sustain: 0 }, volume: -10 }).toDestination();
+    const now = Tone.now(); barkSynth.triggerAttackRelease('A3', '16n', now); barkSynth.triggerAttackRelease('G3', '16n', now + 0.18);
+  } catch (e) { /* optional */ }
+}
+function updatePet(dt, t) {
+  if (!pet.g) return;
+  const tp = petTargetPos();
+  let goal = null, wantSleep = false;
+  if (tp) {
+    if (Math.hypot(tp.x - pet.lastSeen.x, tp.z - pet.lastSeen.z) > 0.05) { pet.lastSeen = { x: tp.x, z: tp.z, t }; }
+    if (t - pet.lastSeen.t > 40) wantSleep = true;                       // owner idle for a while → nap
+    else {
+      const d = Math.hypot(tp.x - pet.x, tp.z - pet.z);
+      if (d > 14 || (pet.stuckT > 2.5 && d > 3)) {                        // too far or stuck: zoomies teleport
+        const a = Math.random() * Math.PI * 2; pet.x = tp.x + Math.cos(a) * 1.2; pet.z = tp.z + Math.sin(a) * 1.2; pet.stuckT = 0;
+      }
+      if (d > 1.4) goal = { x: tp.x + (pet.x - tp.x) / d * 1.1, z: tp.z + (pet.z - tp.z) / d * 1.1 };
+      else pet.yaw = Math.atan2(-(tp.x - pet.x), -(tp.z - pet.z));        // sit and look at the owner
+    }
+  } else wantSleep = true;
+  if (wantSleep) {
+    const rugs = placed.filter(o => o.userData.id === 'rug');
+    let best = null, bd = Infinity;
+    for (const r of rugs) { const d = Math.hypot(r.position.x - pet.x, r.position.z - pet.z); if (d < bd) { bd = d; best = r; } }
+    if (best && bd > 0.3) goal = { x: best.position.x, z: best.position.z };
+  }
+  let speed = 0;
+  if (goal) {
+    const dx = goal.x - pet.x, dz = goal.z - pet.z, d = Math.hypot(dx, dz);
+    speed = Math.min(4.2, Math.max(1.2, d * 1.6));
+    const step = Math.min(d, speed * dt), nx = pet.x + dx / d * step, nz = pet.z + dz / d * step;
+    let moved = false;
+    if (!petBlocked(nx, pet.z)) { pet.x = nx; moved = true; }
+    if (!petBlocked(pet.x, nz)) { pet.z = nz; moved = true; }
+    pet.stuckT = moved ? Math.max(0, pet.stuckT - dt) : pet.stuckT + dt;
+    const ty = Math.atan2(-dx, -dz); let dy = ty - pet.yaw; pet.yaw += Math.atan2(Math.sin(dy), Math.cos(dy)) * Math.min(1, dt * 8);
+  }
+  pet.sleeping = !goal && wantSleep;
+  pet.walk += ((goal ? Math.min(speed / 3, 1.3) : 0) - pet.walk) * Math.min(1, dt * 8);
+  pet.phase += dt * (3 + speed * 4);
+  const { body, head, legs, tail, zzz, tag } = pet.g.userData;
+  pet.g.position.set(pet.x, 0, pet.z); pet.g.rotation.y = pet.yaw;
+  const sw = Math.sin(pet.phase) * pet.walk;
+  legs[0].rotation.x = sw * 0.7; legs[3].rotation.x = sw * 0.7; legs[1].rotation.x = -sw * 0.7; legs[2].rotation.x = -sw * 0.7;
+  tail.rotation.z = Math.sin(t * (pet.sleeping ? 1.5 : 14)) * (pet.sleeping ? 0.08 : 0.5);
+  if (pet.sleeping) {                      // curled up asleep
+    body.position.y += (-0.24 - body.position.y) * Math.min(1, dt * 4);
+    legs.forEach((l, i) => { l.rotation.x = i < 2 ? -1.35 : 1.35; });
+    head.rotation.x += (0.35 - head.rotation.x) * Math.min(1, dt * 4);
+    zzz.visible = true; zzz.position.y = 0.62 + Math.sin(t * 1.5) * 0.06;
+  } else {
+    body.position.y += (Math.abs(Math.sin(pet.phase)) * 0.03 * pet.walk - body.position.y) * Math.min(1, dt * 10);
+    head.rotation.x += (-0.1 - head.rotation.x) * Math.min(1, dt * 6);
+    zzz.visible = false;
+  }
+  tag.visible = !photoMode;
+}
+
+// ---- hide & seek (the server runs the rounds; this is the client side)
+const hs = { phase: 'idle', seekerId: null, seekerName: '', found: [], endsAt: 0, offset: 0 };
+let hoveredPlayer = null;
+const hsBanner = () => document.getElementById('hs-banner'), hsBlind = () => document.getElementById('hs-blind');
+const iAmSeeker = () => hs.phase !== 'idle' && hs.seekerId && hs.seekerId === net.myId;
+function hsFrozen() { return hs.phase === 'hiding' && iAmSeeker(); }
+function toggleHideSeek() {
+  if (!net.online) { flashHint('Hide & seek needs the online game and at least 2 players', 2500); return; }
+  if (hs.phase === 'idle') net.socket.emit('hs:start');
+  else if (confirm('Stop the current hide & seek round?')) net.socket.emit('hs:stop');
+}
+function hsTryTag() {
+  if (!(hs.phase === 'seeking' && iAmSeeker() && hoveredPlayer)) return false;
+  net.socket.emit('hs:tag', { id: hoveredPlayer }); return true;
+}
+function updateHideSeek() {
+  const banner = hsBanner(), blind = hsBlind();
+  if (hs.phase === 'idle') { banner.style.display = 'none'; blind.style.display = 'none'; hoveredPlayer = null; return; }
+  const left = Math.max(0, Math.ceil((hs.endsAt - (Date.now() + hs.offset)) / 1000));
+  const mm = `${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`;
+  const hiders = Math.max(0, players.size + 1 - 1), foundMe = hs.found.includes(net.myId);
+  banner.style.display = 'block';
+  if (hs.phase === 'hiding') {
+    banner.textContent = iAmSeeker() ? `🙈 You're the seeker. Counting… ${left}` : `🏃 Hide! ${hs.seekerName} is counting… ${left}`;
+    blind.style.display = iAmSeeker() ? 'flex' : 'none';
+    if (iAmSeeker()) blind.querySelector('b').textContent = left;
+  } else {
+    blind.style.display = 'none';
+    banner.textContent = iAmSeeker() ? `🔎 Find everyone! ${mm} · found ${hs.found.length}/${hiders}` : foundMe ? `😅 You were found! ${mm} left` : `🤫 Stay hidden! ${hs.seekerName} is seeking · ${mm}`;
+  }
+  // seeker aims at a player to tag them
+  hoveredPlayer = null;
+  if (hs.phase === 'seeking' && iAmSeeker() && aimActive()) {
+    raycaster.setFromCamera(aim(), camera); raycaster.far = 3.2;
+    const hit = raycaster.intersectObjects(avatarGroup.children, true)[0]; raycaster.far = Infinity;
+    if (hit) { let o = hit.object; while (o && o.parent !== avatarGroup) o = o.parent; for (const [id, p] of players) if (p.group === o && !hs.found.includes(id)) hoveredPlayer = id; }
+    if (hoveredPlayer) {
+      hoverLabel.textContent = `🔎 ${isTouch ? 'Tap 🪑' : 'Press E or click'} to tag ${players.get(hoveredPlayer).name}!`;
+      hoverLabel.style.display = 'block'; hoverLabel.style.left = '50%'; hoverLabel.style.top = 'calc(50% + 22px)';
+    }
+  }
+}
+
+// ---- UI wiring for the fun buttons
+function setupFunUI() {
+  const bar = document.getElementById('emote-bar');
+  EMOTES.forEach((e, i) => {
+    const b = document.createElement('button');
+    b.innerHTML = `<span>${e.icon}</span>${e.name}<i>⇧${i + 1}</i>`;
+    b.onclick = (ev) => { ev.stopPropagation(); doEmote(e.id); };
+    bar.appendChild(b);
+  });
+  const toggleBar = () => bar.classList.toggle('open');
+  document.getElementById('btn-emote').onclick = toggleBar;
+  document.getElementById('btn-pet').onclick = () => started && callPet();
+  document.getElementById('btn-party').onclick = () => started && toggleParty();
+  document.getElementById('btn-hs').onclick = () => started && toggleHideSeek();
+  const tap = (id, fn) => document.getElementById(id).addEventListener('click', (e) => { e.preventDefault(); if (started) fn(); });
+  tap('t-jump', jump); tap('t-sit', interact); tap('t-emote', toggleBar);
+}
+
 // ================================================================ multiplayer
 // Protocol (see server.js):  join → init | place → placed/rejected | remove → removed | clear → cleared
 //                            env → env | move → playerMoved | playerJoined / playerLeft
@@ -1812,22 +2366,45 @@ function removePlayer(id) {
 function updateAvatars(dt) {
   const k = 1 - Math.exp(-12 * dt);
   const t = clock.elapsedTime;
+  const hideTags = photoMode || iAmSeeker();                        // the seeker can't spot people by their name tags
   players.forEach(p => {
-    const g = p.group;
+    const g = p.group, tg = p.target, body = g.children[0], kk = p.avatar === 'girl' ? 0.95 : 1;
     const ox = g.position.x, oz = g.position.z;
-    g.position.x += (p.target.x - g.position.x) * k;
-    g.position.z += (p.target.z - g.position.z) * k;
-    let dy = p.target.yaw - g.rotation.y; dy = Math.atan2(Math.sin(dy), Math.cos(dy));   // shortest turn
+    g.position.x += (tg.x - g.position.x) * k;
+    g.position.z += (tg.z - g.position.z) * k;
+    g.position.y += ((tg.y || 0) - g.position.y) * Math.min(1, dt * 20);
+    let dy = tg.yaw - g.rotation.y; dy = Math.atan2(Math.sin(dy), Math.cos(dy));   // shortest turn
     g.rotation.y += dy * k;
     // Walk cycle driven by how fast the avatar is actually moving
     const speed = dt > 0 ? Math.hypot(g.position.x - ox, g.position.z - oz) / dt : 0;
     p.walk += (Math.min(speed / 2.4, 1.4) - p.walk) * (1 - Math.exp(-8 * dt));
     p.phase += dt * (2 + speed * 3.2);
     const { legs, arms, head } = g.userData.parts, sw = Math.sin(p.phase) * p.walk;
-    legs[0].rotation.x = sw * 0.6; legs[1].rotation.x = -sw * 0.6;
-    arms[0].rotation.x = -sw * 0.5 + Math.sin(t * 1.6) * 0.03; arms[1].rotation.x = sw * 0.5 - Math.sin(t * 1.6) * 0.03;
-    g.children[0].position.y = Math.abs(Math.sin(p.phase)) * 0.03 * p.walk;               // slight bounce
-    head.rotation.x += (THREE.MathUtils.clamp(p.target.pitch || 0, -0.8, 0.8) * 0.7 - head.rotation.x) * k;
+    // reset to the standing pose, then layer the current pose / emote on top
+    body.rotation.set(0, 0, 0); body.position.set(0, Math.abs(Math.sin(p.phase)) * 0.03 * p.walk, 0);
+    legs[0].rotation.set(sw * 0.6, 0, 0); legs[1].rotation.set(-sw * 0.6, 0, 0);
+    arms[0].rotation.set(-sw * 0.5 + Math.sin(t * 1.6) * 0.03, 0, -0.06); arms[1].rotation.set(sw * 0.5 - Math.sin(t * 1.6) * 0.03, 0, 0.06);
+    const pose = tg.pose || 'stand';
+    if (pose === 'sit') {
+      body.position.y = (tg.sy || 0.5) + 0.08 - 0.9 * kk;
+      legs[0].rotation.x = legs[1].rotation.x = 1.45; arms[0].rotation.x = arms[1].rotation.x = 0.55;
+    } else if (pose === 'lie') {
+      body.rotation.x = Math.PI / 2; body.position.y = (tg.sy || 0.6) + 0.13;
+      legs[0].rotation.x = legs[1].rotation.x = 0; arms[0].rotation.set(0, 0, -0.15); arms[1].rotation.set(0, 0, 0.15);
+    } else if (pose === 'floor') {
+      body.position.y = -0.55; legs[0].rotation.x = legs[1].rotation.x = 1.5; arms[0].rotation.x = arms[1].rotation.x = 0.4;
+    }
+    let em = p.emote && t - p.emote.t0 < p.emote.dur ? p.emote.id : null;
+    if (!em && partyMix > 0.3 && pose === 'stand' && p.walk < 0.15) em = 'dance';   // party: idle people dance
+    if (em === 'wave') { arms[1].rotation.set(0, 0, 2.6 + Math.sin(t * 10) * 0.35); }
+    else if (em === 'clap') { const c = Math.abs(Math.sin(t * 9)); arms[0].rotation.set(1.3, 0, 0.15 + 0.3 * c); arms[1].rotation.set(1.3, 0, -0.15 - 0.3 * c); }
+    else if (em === 'dance' && pose === 'stand') {
+      body.position.y += Math.abs(Math.sin(t * 6.2)) * 0.07; body.rotation.z = Math.sin(t * 3.1) * 0.14; body.rotation.y = Math.sin(t * 1.55) * 0.5;
+      arms[0].rotation.set(0, 0, -(1.6 + Math.sin(t * 6.2) * 0.9)); arms[1].rotation.set(0, 0, 1.6 + Math.sin(t * 6.2 + Math.PI) * 0.9);
+      legs[0].rotation.x = Math.max(0, Math.sin(t * 6.2)) * 0.5; legs[1].rotation.x = Math.max(0, -Math.sin(t * 6.2)) * 0.5;
+    }
+    head.rotation.x += (THREE.MathUtils.clamp(tg.pitch || 0, -0.8, 0.8) * 0.7 - head.rotation.x) * k;
+    if (g.userData.tag) g.userData.tag.visible = !hideTags;
   });
 }
 
@@ -1837,7 +2414,7 @@ function connectNet() {
   net.socket = socket; setNetStatus();
   socket.on('connect', () => socket.emit('join', { room: net.room, name: myName, color: myColor, avatar: myAvatar }));
   socket.on('disconnect', () => { net.online = false; setNetStatus(); [...players.keys()].forEach(removePlayer); });
-  socket.on('init', ({ you, objects, players: list, env }) => {
+  socket.on('init', ({ you, objects, players: list, env, pet: petState, hs: hsState }) => {
     net.online = true; net.myId = you;
     [...placed].forEach(removeItem);                         // the server's room is the truth
     if (carry) cancelCarry(false);
@@ -1847,6 +2424,8 @@ function connectNet() {
     [...players.keys()].forEach(removePlayer);
     list.forEach(p => { if (p.id !== you) addPlayer(p); });
     applyRemoteEnv(env);
+    if (petState) { pet.targetId = petState.targetId; pet.targetName = petState.name || ''; }
+    if (hsState) { Object.assign(hs, hsState); hs.offset = hsState.now - Date.now(); }
     setNetStatus();
     flashHint(`Connected to room "${net.room}"`, 2000);
   });
@@ -1882,18 +2461,31 @@ function connectNet() {
     flashHint(`Server put it back: ${reason}`, 2000);
   });
   socket.on('env', applyRemoteEnv);
+  socket.on('emoted', ({ id, type }) => { const p = players.get(id); if (p) showRemoteEmote(p, type); });
+  socket.on('pet', ({ targetId, name }) => setPetTarget(targetId, name));
+  socket.on('hs', (st) => {
+    const was = hs.phase;
+    Object.assign(hs, st); hs.offset = st.now - Date.now();
+    if (was !== 'hiding' && hs.phase === 'hiding') flashHint(iAmSeeker() ? '🙈 You are the seeker! Wait while everyone hides…' : `🏃 Hide! ${hs.seekerName} is the seeker`, 3500);
+    if (was === 'hiding' && hs.phase === 'seeking') flashHint(iAmSeeker() ? '🔎 Go find them!' : '🤫 The seeker is coming…', 2500);
+  });
+  socket.on('hs:found', ({ name }) => flashHint(`🔎 ${name} was found!`, 2000));
+  socket.on('hs:end', ({ reason, found, total, seekerName }) => flashHint(`🏁 Round over: ${reason}. ${seekerName} found ${found}/${total}.`, 5000));
+  socket.on('hs:error', (msg) => flashHint(msg, 2500));
   socket.on('playerJoined', (p) => { addPlayer(p); setNetStatus(); flashHint(`${p.name} joined`, 1800); });
   socket.on('playerLeft', ({ id }) => { const p = players.get(id); removePlayer(id); setNetStatus(); if (p) flashHint(`${p.name} left`, 1800); });
-  socket.on('playerMoved', ({ id, x, z, yaw, pitch }) => { const p = players.get(id); if (p) Object.assign(p.target, { x, z, yaw, pitch }); });
+  socket.on('playerMoved', ({ id, x, z, yaw, pitch, y, pose, sy }) => { const p = players.get(id); if (p) Object.assign(p.target, { x, z, yaw, pitch, y, pose, sy }); });
 }
 
 buildInventoryUI();
 rebuildGhost();
+initPet();
+setupFunUI();
 
 // ================================================================ loop
 const clock = new THREE.Clock();
 let fpsFrames = 0, fpsTime = 0, fpsAccum = [], autoQuality = true, sendTimer = 0, focusDist = 3;
-const lastSent = { x: 0, z: 0, yaw: 0, pitch: 0 };
+let lastSent = { x: 0, z: 0, yaw: 0, pitch: 0, y: 0, pose: 'stand', sy: 0 };
 renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.05);   // clamp: no teleporting after a tab switch
   const t = clock.elapsedTime;
@@ -1909,6 +2501,13 @@ renderer.setAnimationLoop(() => {
   updateFlicker(t);
   updateAvatars(dt);
   updateCarry(dt);
+  updateParty(dt, t);
+  updatePet(dt, t);
+  updateHideSeek();
+  if (garden.water) garden.water.material.emissiveIntensity = 0.25 + Math.sin(t * 1.3) * 0.05;
+  // Sun shadows follow you around the plot (sharp shadows everywhere, re-rendered only when you move far)
+  const sx = Math.round(camera.position.x / 4) * 4, sz = Math.round(camera.position.z / 4) * 4;
+  if (sunLight.target.position.x !== sx || sunLight.target.position.z !== sz) { sunLight.target.position.set(sx, 0, sz); shadowsDirty = true; }
   if (net.remoteDrags) net.remoteDrags.forEach((d) => {                  // others moving furniture: glide it
     const g = d.g, k = 1 - Math.exp(-14 * dt);
     if (!placed.includes(g)) return;
@@ -1955,10 +2554,10 @@ renderer.setAnimationLoop(() => {
   sendTimer += dt;
   if (net.online && sendTimer > 1 / 12) {
     sendTimer = 0;
-    const p = camera.position;
-    if (Math.abs(p.x - lastSent.x) + Math.abs(p.z - lastSent.z) + Math.abs(look.yaw - lastSent.yaw) + Math.abs(look.pitch - lastSent.pitch) > 0.002) {
-      Object.assign(lastSent, { x: p.x, z: p.z, yaw: look.yaw, pitch: look.pitch });
-      net.socket.volatile.emit('move', lastSent);
+    const mp = myPose(), next = { ...mp, pitch: look.pitch, y: me.jy };
+    if (Math.abs(next.x - lastSent.x) + Math.abs(next.z - lastSent.z) + Math.abs(next.yaw - lastSent.yaw) + Math.abs(next.pitch - lastSent.pitch) + Math.abs(next.y - lastSent.y) > 0.002 || next.pose !== lastSent.pose) {
+      lastSent = next;
+      net.socket.volatile.emit('move', next);
     }
   }
 });
