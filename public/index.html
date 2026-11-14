@@ -96,6 +96,21 @@
   #emote-bar span { font-size: 24px; }
   #emote-bar i { font-style: normal; font-size: 9px; opacity: .5; }
   body.touch #emote-bar i { display: none; }
+  #btn-ach { font-size: 13px !important; font-weight: 600; }
+  #ach-toast { position: fixed; right: 16px; top: 84px; z-index: 45; display: flex; gap: 12px; align-items: center; padding: 12px 16px; max-width: 320px; transform: translateX(120%); transition: transform .35s cubic-bezier(.2,.9,.3,1.2); pointer-events: none; }
+  #ach-toast.show { transform: translateX(0); }
+  #ach-toast .ai { font-size: 34px; }
+  #ach-toast small { display: block; font-size: 10px; color: #fbbf24; text-transform: uppercase; letter-spacing: .06em; }
+  #ach-toast b { display: block; font-size: 15px; }
+  #ach-toast span { font-size: 12px; color: #9ca3af; }
+  #ach-panel { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%) scale(.96); z-index: 46; width: min(560px, 92vw); max-height: 80vh; overflow: auto; padding: 18px; opacity: 0; pointer-events: none; transition: opacity .2s, transform .2s; }
+  #ach-panel.open { opacity: 1; pointer-events: auto; transform: translate(-50%, -50%); }
+  .ach-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; font-size: 16px; }
+  .ach-head button { border: 0; background: rgba(255,255,255,.08); color: #fff; border-radius: 8px; width: 30px; height: 30px; cursor: pointer; }
+  #ach-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+  .ach { background: rgba(255,255,255,.04); border-radius: 12px; padding: 12px; display: flex; flex-direction: column; gap: 4px; opacity: .45; }
+  .ach.done { opacity: 1; background: rgba(251,191,36,.12); border: 1px solid rgba(251,191,36,.3); }
+  .ach span { font-size: 26px; } .ach b { font-size: 13px; } .ach small { font-size: 11px; color: #9ca3af; }
   #hs-banner { position: fixed; left: 50%; top: 84px; transform: translateX(-50%); z-index: 36; padding: 10px 18px; font: 600 14px Inter, sans-serif; display: none; white-space: nowrap; }
   #hs-blind { position: fixed; inset: 0; z-index: 34; background: rgba(5,6,10,.96); display: none; flex-direction: column; align-items: center; justify-content: center; gap: 10px; color: #e5e7eb; font: 500 16px Inter, sans-serif; pointer-events: none; }
   #hs-blind b { font-size: 96px; font-weight: 700; color: #fff; }
@@ -131,11 +146,12 @@
     <span class="dot"></span>
     <span id="studio-name" style="font-weight:600;font-size:14px">Studio</span>
     <span class="sep"></span>
-    <span class="hint"><b>WASD</b> move · <b>2-finger swipe</b>/arrows look · <b>Pinch</b> zoom · <b>Tap</b> place · <b>R</b> rotate · <b>E</b> sit · <b>Del</b> delete · <b>Space</b> jump · <b>⇧1-5</b> emotes · <b>K</b> dog · <b>G</b> party · <b>Z X</b>/1-0 pick · <b>N</b> night · <b>T</b> rain · <b>H</b> hide UI · <b>P</b> photo · <b>F</b> fullscreen</span>
+    <span class="hint"><b>WASD</b> move · <b>2-finger swipe</b>/arrows look · <b>Pinch</b> zoom · <b>Tap</b> place · <b>R</b> rotate · <b>Esc</b> empty hand · <b>E</b> sit · <b>Del</b> delete · <b>Space</b> jump · <b>⇧1-5</b> emotes · <b>K</b> dog · <b>G</b> party · <b>Z X</b>/1-0 pick · <b>N</b> night · <b>T</b> rain · <b>H</b> hide UI · <b>P</b> photo · <b>F</b> fullscreen</span>
   </div>
   <div class="glass tools">
     <span id="fps">-- fps</span>
     <span id="exposure">EV 1.00</span>
+    <button id="btn-ach" title="Achievements">🏆</button>
     <button id="btn-emote" title="Emotes (Shift+1…5)">😀</button>
     <button id="btn-pet" title="Call Bruno the dog (K)">🐶</button>
     <button id="btn-party" title="Party mode (G)">🪩</button>
@@ -152,6 +168,8 @@
 
 <div id="netpanel" class="glass"></div>
 <div id="emote-bar" class="glass"></div>
+<div id="ach-toast" class="glass"></div>
+<div id="ach-panel" class="glass"><div class="ach-head"><b>🏆 Achievements</b><button id="ach-close">✕</button></div><div id="ach-grid"></div></div>
 <div id="hs-banner" class="glass"></div>
 <div id="hs-blind"><div>🙈 You're the seeker</div><b>15</b><div>Close your eyes… everyone is hiding!</div></div>
 
@@ -194,6 +212,18 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 // =====================================================================
 const W = 16, D = 12, H = 3, T = 0.2;   // house width, depth, ceiling height, exterior wall thickness
 const GW = 44, GD = 44;                  // the whole plot (house + garden), fenced
+const L1 = H + 0.2, H2 = 3.0;             // upper floor height and its ceiling height
+const STAIRS = { x0: 2.4, x1: 3.44, z0: 1.2, z1: 4.95 };   // staircase in the study, rising towards the south
+const inRect = (x, z, r, pad = 0) => x > r.x0 - pad && x < r.x1 + pad && z > r.z0 - pad && z < r.z1 + pad;
+const levelOfY = (y) => (y > L1 / 2 ? 1 : 0);
+const levelY = (lv) => (lv === 1 ? L1 : 0);
+// Height of the walkable surface at (x, z) for someone currently on `level`
+function floorAt(x, z, level) {
+  if (inRect(x, z, STAIRS)) return THREE.MathUtils.clamp((z - STAIRS.z0) / (STAIRS.z1 - STAIRS.z0), 0, 1) * L1;
+  if (level === 1) return L1;
+  if (typeof POOL !== 'undefined' && inRect(x, z, POOL)) return -1.05;      // standing in the pool
+  return 0;
+}
 const EYE = 1.65, RADIUS = 0.28;        // eye height and body radius of the visitor
 
 // Multiplayer state (filled in once connected; the game also works fully offline)
@@ -493,23 +523,24 @@ const WINDOW_DEFS = [
 ];
 const DOOR_H = 2.1;
 
-function addCollider(m) {
+function addCollider(m, level = 0, kind = 'wall') {
   m.updateMatrixWorld(true);
   const b = new THREE.Box3().setFromObject(m);
-  STATIC_COLLIDERS.push({ minX: b.min.x, maxX: b.max.x, minZ: b.min.z, maxZ: b.max.z });
+  STATIC_COLLIDERS.push({ minX: b.min.x, maxX: b.max.x, minZ: b.min.z, maxZ: b.max.z, level, kind });
 }
 // A straight wall with rectangular openings. axis 'x': runs along x at z = c.  axis 'z': runs along z at x = c.
-function buildWall(axis, c, from, to, openings = [], thick = T, collide = false) {
+// base = floor height the wall stands on, height = wall height, level = which floor its collider belongs to
+function buildWall(axis, c, from, to, openings = [], thick = T, collide = false, base = 0, height = H, level = 0) {
   let cur = from;
   const add = (a, b, y0, y1) => {
     if (b - a < 0.001 || y1 - y0 < 0.001) return;
-    const len = b - a, mid = (a + b) / 2, h = y1 - y0, cy = (y0 + y1) / 2;
+    const len = b - a, mid = (a + b) / 2, h = y1 - y0, cy = base + (y0 + y1) / 2;
     const m = axis === 'x' ? box(len, h, thick, MAT.plaster, mid, cy, c) : box(thick, h, len, MAT.plaster, c, cy, mid);
     scene.add(m);
-    if (collide && y0 < 1.8) addCollider(m);
+    if (collide && y0 < 1.8) addCollider(m, level);
   };
-  for (const o of [...openings].sort((p, q) => p.a - q.a)) { add(cur, o.a, 0, H); add(o.a, o.b, 0, o.y0); add(o.a, o.b, o.y1, H); cur = o.b; }
-  add(cur, to, 0, H);
+  for (const o of [...openings].sort((p, q) => p.a - q.a)) { add(cur, o.a, 0, height); add(o.a, o.b, 0, o.y0); add(o.a, o.b, o.y1, height); cur = o.b; }
+  add(cur, to, 0, height);
 }
 // Painted door casing around an interior doorway, on both faces of the wall
 function doorCasing(axis, c, a, b, thick) {
@@ -560,7 +591,7 @@ function buildGarden() {
   const coping = std({ color: 0xe8e2d6, roughness: 0.7 });
   for (const [w, d, x, z] of [[pw + 0.8, 0.4, pcx, POOL.z0 - 0.2], [pw + 0.8, 0.4, pcx, POOL.z1 + 0.2], [0.4, pd, POOL.x0 - 0.2, pcz], [0.4, pd, POOL.x1 + 0.2, pcz]])
     scene.add(box(w, 0.06, d, coping, x, 0.02, z));
-  STATIC_COLLIDERS.push({ minX: POOL.x0 - 0.1, maxX: POOL.x1 + 0.1, minZ: POOL.z0 - 0.1, maxZ: POOL.z1 + 0.1 });
+  STATIC_COLLIDERS.push({ minX: POOL.x0 - 0.1, maxX: POOL.x1 + 0.1, minZ: POOL.z0 - 0.1, maxZ: POOL.z1 + 0.1, level: 0, kind: 'pool' });
 
   // Wooden fence around the plot (instanced posts = 1 draw call)
   const fenceMat = std({ map: grainTex, color: 0x8a6a4c, roughness: 0.8 });
@@ -594,6 +625,87 @@ function buildGarden() {
 const garden = {};
 const UP_AXIS = new THREE.Vector3(0, 1, 0);
 
+// ================================================================ the upper floor + rooftop terrace
+//  Upper floor plan (y = L1):  z 1…6 enclosed (master suite | lounge with the stair landing), z −6…1 open rooftop terrace.
+const UPPER_WINDOWS = [
+  { a: -6.2, b: -3.0, sill: 0.6, head: 2.5 },     // master suite (south)
+  { a: 4.6, b: 7.2, sill: 0.6, head: 2.5 },       // lounge (south)
+];
+function shapeFloor(x0, x1, z0, z1, hole) {          // floor plane (shape with optional hole), UVs in metres
+  const sh = new THREE.Shape(); sh.moveTo(x0, -z0); sh.lineTo(x1, -z0); sh.lineTo(x1, -z1); sh.lineTo(x0, -z1); sh.closePath();
+  if (hole) { const h = new THREE.Path(); h.moveTo(hole.x0, -hole.z0); h.lineTo(hole.x0, -hole.z1); h.lineTo(hole.x1, -hole.z1); h.lineTo(hole.x1, -hole.z0); h.closePath(); sh.holes.push(h); }
+  const geo = new THREE.ShapeGeometry(sh); geo.rotateX(-Math.PI / 2); return geo;
+}
+function buildUpperFloor() {
+  const top = L1 + 0.002;
+  // Upstairs parquet (its own textures, tiled per metre) and terrace stone tiles
+  MAT.floorUpper = MAT.floor.clone();
+  for (const k of ['map', 'roughnessMap', 'bumpMap']) if (MAT.floor[k]) { MAT.floorUpper[k] = MAT.floor[k].clone(); MAT.floorUpper[k].repeat.set(0.5, 0.5); MAT.floorUpper[k].needsUpdate = true; }
+  const inner = new THREE.Mesh(shapeFloor(-W / 2, W / 2, 1, D / 2, STAIRS), MAT.floorUpper);
+  inner.position.y = top; inner.receiveShadow = true; scene.add(inner);
+  const terraceTiles = genTex(256, 256, true, [1, 1], (x, y) => {
+    const grout = (x % 128) < 3 || (y % 128) < 3; if (grout) return [140, 136, 130];
+    const v = 200 + 20 * fbm(tileN, x, y, 3); return [v, v - 3, v - 8];
+  });
+  terraceTiles.repeat.set(1 / 1.2, 1 / 1.2);       // 60 cm tiles
+  const terrace = new THREE.Mesh(shapeFloor(-W / 2 - T, W / 2 + T, -D / 2 - T, 1), std({ map: terraceTiles, roughness: 0.6 }));
+  terrace.position.y = top; terrace.receiveShadow = true; scene.add(terrace);
+
+  // Upstairs walls (base = L1, height = H2, colliders on level 1)
+  const U = (axis, c, from, to, openings = [], thick = T) => buildWall(axis, c, from, to, openings, thick, true, L1, H2, 1);
+  U('x', D / 2 + T / 2, -W / 2 - T, W / 2 + T, UPPER_WINDOWS.map(w => ({ a: w.a, b: w.b, y0: w.sill, y1: w.head })));
+  U('z', -W / 2 - T / 2, 1 - 0.06, D / 2 + T, [{ a: 2.6, b: 4.4, y0: 0.6, y1: 2.5 }]);
+  U('z', W / 2 + T / 2, 1 - 0.06, D / 2 + T);
+  const slide = [{ a: -5.2, b: -2.6, y0: 0, y1: 2.35 }, { a: 4.2, b: 6.8, y0: 0, y1: 2.35 }];     // sliding glass doors to the terrace
+  U('x', 1, -W / 2 - T, W / 2 + T, slide, 0.12);
+  U('z', -0.5, 1.06, D / 2, [{ a: 4.6, b: 5.6, y0: 0, y1: DOOR_H }], 0.12);                      // suite | lounge partition
+  // Roof over the upstairs rooms
+  scene.add(box(W + 2 * T, 0.2, D / 2 - 1 + T + 0.06, MAT.ceiling, 0, L1 + H2 + 0.1, (1 - 0.06 + D / 2 + T) / 2));
+  // Windows + sliding-door frames
+  for (const w of UPPER_WINDOWS) {
+    const zW = D / 2 + T / 2, cx = (w.a + w.b) / 2, ww = w.b - w.a, hh = w.head - w.sill, p = 0.05, dp = 0.08, yb = L1;
+    scene.add(box(ww, p, dp, MAT.frame, cx, yb + w.sill + p / 2, zW), box(ww, p, dp, MAT.frame, cx, yb + w.head - p / 2, zW));
+    scene.add(box(p, hh, dp, MAT.frame, w.a + p / 2, yb + w.sill + hh / 2, zW), box(p, hh, dp, MAT.frame, w.b - p / 2, yb + w.sill + hh / 2, zW));
+    scene.add(box(0.04, hh, dp, MAT.frame, cx, yb + w.sill + hh / 2, zW));
+    const glass = new THREE.Mesh(new THREE.PlaneGeometry(ww, hh), MAT.glass); glass.position.set(cx, yb + w.sill + hh / 2, zW); glassGroup.add(glass);
+  }
+  for (const z of [-W / 2 - T / 2]) {
+    const glass = new THREE.Mesh(new THREE.PlaneGeometry(1.8, 1.9), MAT.glass); glass.rotation.y = Math.PI / 2; glass.position.set(z, L1 + 1.55, 3.5); glassGroup.add(glass);
+  }
+  for (const d of slide) {
+    const cx = (d.a + d.b) / 2;
+    scene.add(box(d.b - d.a, 0.05, 0.1, MAT.frame, cx, L1 + d.y1 - 0.025, 1), box(0.05, d.y1, 0.1, MAT.frame, d.a + 0.025, L1 + d.y1 / 2, 1), box(0.05, d.y1, 0.1, MAT.frame, d.b - 0.025, L1 + d.y1 / 2, 1));
+    const panel = new THREE.Mesh(new THREE.PlaneGeometry((d.b - d.a) / 2, d.y1), MAT.glass); panel.position.set(d.a + (d.b - d.a) * 0.25, L1 + d.y1 / 2, 1.02); glassGroup.add(panel);   // one panel slid open
+  }
+
+  // Staircase: solid oak steps + a sloped steel handrail
+  const steps = 16, rise = L1 / steps, run = (STAIRS.z1 - STAIRS.z0) / steps, sw = STAIRS.x1 - STAIRS.x0;
+  for (let i = 0; i < steps; i++) {
+    const hgt = rise * (i + 1);
+    scene.add(box(sw, hgt, run, MAT.oak, (STAIRS.x0 + STAIRS.x1) / 2, hgt / 2, STAIRS.z0 + run * (i + 0.5)));
+    scene.add(box(sw, 0.015, 0.02, MAT.blackMetal, (STAIRS.x0 + STAIRS.x1) / 2, hgt + 0.007, STAIRS.z0 + run * i + 0.01));      // nosing
+  }
+  const railLen = Math.hypot(STAIRS.z1 - STAIRS.z0, L1), rail = cyl(0.022, 0.022, railLen, MAT.blackMetal, STAIRS.x0 + 0.05, L1 / 2 + 0.95, (STAIRS.z0 + STAIRS.z1) / 2, 10);
+  rail.rotation.x = Math.atan2(STAIRS.z1 - STAIRS.z0, L1); scene.add(rail);
+  for (let i = 1; i < steps; i += 3) scene.add(cyl(0.012, 0.012, 0.95, MAT.blackMetal, STAIRS.x0 + 0.05, rise * (i + 1) + 0.475, STAIRS.z0 + run * (i + 0.5), 6));
+  // Ground floor: stop people walking into the side of the stairs
+  STATIC_COLLIDERS.push({ minX: STAIRS.x0 - 0.06, maxX: STAIRS.x0 + 0.04, minZ: STAIRS.z0 + 0.7, maxZ: STAIRS.z1, level: 0, kind: 'rail' });
+  // Upstairs: glass balustrade around the stair opening (open on the south side, where you arrive)
+  const glassRail = (x0, x1, z0, z1, level = 1) => {
+    const w = Math.max(0.03, x1 - x0), d = Math.max(0.03, z1 - z0), cx = (x0 + x1) / 2, cz = (z0 + z1) / 2;
+    const g = new THREE.Mesh(new THREE.BoxGeometry(w, 1.0, d), MAT.glass); g.position.set(cx, L1 + 0.5, cz); glassGroup.add(g);
+    scene.add(box(w + 0.02, 0.04, d + 0.02, MAT.blackMetal, cx, L1 + 1.02, cz));
+    STATIC_COLLIDERS.push({ minX: cx - w / 2 - 0.03, maxX: cx + w / 2 + 0.03, minZ: cz - d / 2 - 0.03, maxZ: cz + d / 2 + 0.03, level, kind: 'rail' });
+  };
+  glassRail(STAIRS.x0 - 0.02, STAIRS.x0 + 0.02, STAIRS.z0, STAIRS.z1);
+  glassRail(STAIRS.x0, STAIRS.x1, STAIRS.z0 - 0.02, STAIRS.z0 + 0.02);
+  glassRail(STAIRS.x1 - 0.02, STAIRS.x1 + 0.02, STAIRS.z0, STAIRS.z1);
+  // Terrace edges: glass balustrade so nobody falls off the roof
+  glassRail(-W / 2 - T, W / 2 + T, -D / 2 - T, -D / 2 - T + 0.04);
+  glassRail(-W / 2 - T, -W / 2 - T + 0.04, -D / 2 - T, 1);
+  glassRail(W / 2 + T - 0.04, W / 2 + T, -D / 2 - T, 1);
+}
+
 function buildRoom() {
   const floor = new THREE.Mesh(new THREE.PlaneGeometry(W, D), MAT.floor);
   floor.rotation.x = -Math.PI / 2; floor.receiveShadow = true; scene.add(floor);
@@ -603,7 +715,11 @@ function buildRoom() {
   tiles.rotation.x = -Math.PI / 2; tiles.position.set((bath.x0 + bath.x1) / 2, 0.003, (bath.z0 + bath.z1) / 2); tiles.receiveShadow = true; scene.add(tiles);
 
   // Ceiling + exterior walls cast shadows so sunlight only enters through the windows.
-  scene.add(box(W + 2 * T, 0.2, D + 2 * T, MAT.ceiling, 0, H + 0.1, 0));
+  // Ceiling slab (= upper floor) with an opening above the staircase
+  const sx0 = -W / 2 - T, sx1 = W / 2 + T, sz0 = -D / 2 - T, sz1 = D / 2 + T, sy = H + 0.1;
+  const slab = (x0, x1, z0, z1) => scene.add(box(x1 - x0, 0.2, z1 - z0, MAT.ceiling, (x0 + x1) / 2, sy, (z0 + z1) / 2));
+  slab(sx0, STAIRS.x0, sz0, sz1); slab(STAIRS.x1, sx1, sz0, sz1);
+  slab(STAIRS.x0, STAIRS.x1, sz0, STAIRS.z0); slab(STAIRS.x0, STAIRS.x1, STAIRS.z1, sz1);
   const winOpenings = (side) => WINDOW_DEFS.filter(w => w.side === side).map(w => ({ a: w.a, b: w.b, y0: w.sill, y1: w.head }));
   const FRONT_DOOR = { a: 0.1, b: 1.4, y0: 0, y1: 2.25 };          // front door → garden
   buildWall('x', -D / 2 - T / 2, -W / 2 - T, W / 2 + T, [...winOpenings('N'), FRONT_DOOR], T, true);
@@ -614,7 +730,7 @@ function buildRoom() {
 
   // Interior walls (12 cm) with doorways
   const IT = 0.12, door = (a, b) => ({ a, b, y0: 0, y1: DOOR_H });
-  const wallA = [door(-3.2, -2.2), door(2.2, 3.2), door(6.6, 7.6)];
+  const wallA = [door(-3.2, -2.2), door(-1.0, 0.0), door(6.6, 7.6)];
   buildWall('x', 1, -W / 2, W / 2, wallA, IT, true);
   wallA.forEach(o => doorCasing('x', 1, o.a, o.b, IT));
   buildWall('z', 2, -D / 2, 1, [{ a: -4.4, b: -0.6, y0: 0, y1: 2.4 }], IT, true);   // wide open arch living ↔ kitchen
@@ -677,7 +793,7 @@ function buildRoom() {
     const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
   };
   // [x, z, rotationY, seed] — living-room east wall section, bedroom, study
-  for (const [x, z, ry, seed] of [[1.93, -5.0, -Math.PI / 2, 8], [-7.98, 3.4, Math.PI / 2, 15], [-1.93, 4.3, Math.PI / 2, 23], [3.43, 2.6, -Math.PI / 2, 31]]) {
+  for (const [x, z, ry, seed] of [[1.93, -5.0, -Math.PI / 2, 8], [-7.98, 3.4, Math.PI / 2, 15], [-1.93, 4.3, Math.PI / 2, 23], [3.43, 5.5, -Math.PI / 2, 31]]) {
     const art = new THREE.Group();
     art.add(rbox(0.66, 0.86, 0.03, MAT.blackMetal, 0, 0, 0, 0.004, 1));
     const canvasMesh = new THREE.Mesh(new THREE.PlaneGeometry(0.58, 0.78), std({ map: paint(seed), roughness: 0.85 }));
@@ -686,7 +802,7 @@ function buildRoom() {
   }
 
   // Light switches beside each doorway + a few sockets
-  for (const x of [-3.45, 1.95, 6.35]) scene.add(rbox(0.085, 0.085, 0.012, MAT.trim, x, 1.15, 1 - 0.066, 0.006));
+  for (const x of [-3.45, -1.25, 6.35]) scene.add(rbox(0.085, 0.085, 0.012, MAT.trim, x, 1.15, 1 - 0.066, 0.006));
   for (const [x, z, ry] of [[-W / 2 + 0.006, -1.5, Math.PI / 2], [W / 2 - 0.006, -1.0, Math.PI / 2], [-4.5, D / 2 - 0.006, 0], [1.5, D / 2 - 0.006, 0]]) {
     const sock = rbox(0.085, 0.085, 0.012, MAT.trim, x, 0.32, z, 0.006); sock.rotation.y = ry; scene.add(sock);
   }
@@ -715,6 +831,7 @@ function buildRoom() {
 const buildingMats = [];
 buildRoom();
 buildGarden();
+buildUpperFloor();
 
 // ================================================================ lighting
 const sky = new Sky(); sky.scale.setScalar(1500); scene.add(sky);
@@ -733,12 +850,13 @@ scene.add(hemiLight);
 
 // Recessed ceiling downlights for the evening
 const downlights = [];
-for (const [x, z] of [[-5.5, -3.5], [-1.5, -3.5], [-4.5, -0.6], [5, -3.5], [5, -1], [-5, 3.5], [0.75, 3.5], [5.75, 3.5]]) {
+for (const [x, z, lv] of [[-5.5, -3.5], [-1.5, -3.5], [-4.5, -0.6], [5, -3.5], [5, -1], [-5, 3.5], [0.75, 3.5], [5.75, 3.5], [-4.2, 3.5, 1], [5.6, 3.5, 1]]) {
+  const ceil = lv ? L1 + H2 : H;
   const s = new THREE.SpotLight(0xffd6aa, 0, 0, 0.8, 0.85, 2);
-  s.position.set(x, H - 0.05, z); s.target.position.set(x, 0, z);
+  s.position.set(x, ceil - 0.05, z); s.target.position.set(x, lv ? L1 : 0, z);
   scene.add(s, s.target); downlights.push(s);
   const disc = new THREE.Mesh(new THREE.CircleGeometry(0.065, 24), MAT.downlight);
-  disc.rotation.x = Math.PI / 2; disc.position.set(x, H - 0.001, z); scene.add(disc);
+  disc.rotation.x = Math.PI / 2; disc.position.set(x, ceil - 0.001, z); scene.add(disc);
 }
 // ---- Light pool: a fixed set of point lights created once.
 // three.js recompiles every shader when the NUMBER of lights changes (that was the stutter when
@@ -825,6 +943,7 @@ const rainMat = new THREE.ShaderMaterial({
       gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0); }`,
   fragmentShader: `uniform float uOpacity; uniform vec3 uColor; void main(){ gl_FragColor = vec4(uColor, uOpacity); }`,
 });
+const starMat = new THREE.PointsMaterial({ color: 0xffffff, size: 1.6, sizeAttenuation: false, transparent: true, opacity: 0, depthWrite: false });
 const rain = new THREE.LineSegments(rainGeo, rainMat); rain.frustumCulled = false; rain.visible = false; scene.add(rain);
 
 const DUST = 350, dustPos = new Float32Array(DUST * 3);
@@ -1184,19 +1303,22 @@ const aabbOf = (obj) => {
 const overlap = (a, b, m = 0.01) => a.minX < b.maxX - m && a.maxX > b.minX + m && a.minZ < b.maxZ - m && a.maxZ > b.minZ + m;
 
 function isValid(obj, ignore = null) {
-  const a = aabbOf(obj);
-  if (a.minX < -GW / 2 + 0.05 || a.maxX > GW / 2 - 0.05 || a.minZ < -GD / 2 + 0.05 || a.maxZ > GD / 2 - 0.05) return false;
-  if (STATIC_COLLIDERS.some(w => overlap(a, w))) return false;      // can't push things through walls
+  const a = aabbOf(obj), lv = levelOfY(obj.position.y);
+  if (lv === 0 && (a.minX < -GW / 2 + 0.05 || a.maxX > GW / 2 - 0.05 || a.minZ < -GD / 2 + 0.05 || a.maxZ > GD / 2 - 0.05)) return false;
+  if (lv === 1 && (a.minX < -W / 2 + 0.02 || a.maxX > W / 2 - 0.02 || a.minZ < -D / 2 + 0.02 || a.maxZ > D / 2 - 0.02)) return false;   // upstairs = house footprint
+  const st = { minX: STAIRS.x0, maxX: STAIRS.x1, minZ: STAIRS.z0, maxZ: STAIRS.z1 };
+  if (overlap(a, st)) return false;                                  // keep the staircase (and the hole above it) clear
+  if (STATIC_COLLIDERS.some(w => w.level === lv && overlap(a, w))) return false;   // can't push things through walls
   if (obj.userData.walkable) return true;
   const p = camera.position;
-  if (p.x > a.minX - RADIUS && p.x < a.maxX + RADIUS && p.z > a.minZ - RADIUS && p.z < a.maxZ + RADIUS) return false;
-  return !placed.some(o => o !== ignore && !o.userData.walkable && overlap(a, o.userData.aabb));
+  if (me.level === lv && p.x > a.minX - RADIUS && p.x < a.maxX + RADIUS && p.z > a.minZ - RADIUS && p.z < a.maxZ + RADIUS) return false;
+  return !placed.some(o => o !== ignore && !o.userData.walkable && levelOfY(o.position.y) === lv && overlap(a, o.userData.aabb));
 }
 
 // Local-only add. opts.netId = id shared with the server (or a temporary id while waiting for it).
 function placeItem(id, x, z, rot, opts = {}) {
   const g = buildFurniture(id);
-  g.position.set(x, 0, z); g.rotation.y = rot;
+  g.position.set(x, opts.y || 0, z); g.rotation.y = rot;
   g.userData.placedRoot = true;
   g.userData.netId = opts.netId || null;
   g.userData.uid = opts.uid || ++uidCounter;          // stable local handle (survives model swaps)
@@ -1227,17 +1349,18 @@ function removeItem(g) {
 // Each one is recorded in a personal undo history (Cmd/Ctrl+Z, Cmd/Ctrl+Shift+Z).
 let tempCounter = 0, uidCounter = 0;
 const undoStack = [], redoStack = [];
-const snapOf = (g) => ({ type: g.userData.id, x: g.position.x, z: g.position.z, rot: g.rotation.y });
+const snapOf = (g) => ({ type: g.userData.id, x: g.position.x, z: g.position.z, rot: g.rotation.y, y: levelY(levelOfY(g.position.y)) });
 const byUid = (uid) => placed.find(o => o.userData.uid === uid);
 function record(action) {
   undoStack.push(action); if (undoStack.length > 60) undoStack.shift();
   redoStack.length = 0; updateUndoUI();
 }
 
-function userPlace(type, x, z, rot, { rec = true } = {}) {
+function userPlace(type, x, z, rot, { rec = true, y = 0 } = {}) {
   const netId = net.online ? `tmp-${net.myId}-${++tempCounter}` : null;
-  const g = placeItem(type, x, z, rot, { netId });
-  if (net.online) net.socket.emit('place', { tempId: netId, type, x, z, rot, aabb: g.userData.aabb, walkable: !!g.userData.walkable });
+  const g = placeItem(type, x, z, rot, { netId, y });
+  if (net.online) net.socket.emit('place', { tempId: netId, type, x, z, rot, y, aabb: g.userData.aabb, walkable: !!g.userData.walkable });
+  if (rec) achievePlaced(type);
   if (rec) record({ kind: 'place', uid: g.userData.uid, snap: snapOf(g) });
   return g;
 }
@@ -1260,12 +1383,12 @@ function userClear() {
 }
 // Apply a final position to an existing piece (used by drop, undo and redo)
 function commitMove(g, to) {
-  g.position.set(to.x, 0, to.z); g.rotation.y = to.rot;
+  g.position.set(to.x, to.y || 0, to.z); g.rotation.y = to.rot;
   g.userData.aabb = aabbOf(g);
   syncLight(g);
   markSceneChanged();
   const id = g.userData.netId;
-  if (net.online && id && !id.startsWith('tmp-')) net.socket.emit('objMove', { id, x: to.x, z: to.z, rot: to.rot, aabb: g.userData.aabb });
+  if (net.online && id && !id.startsWith('tmp-')) net.socket.emit('objMove', { id, x: to.x, z: to.z, rot: to.rot, y: to.y || 0, aabb: g.userData.aabb });
 }
 function syncLight(g) { if (g.userData.light && g.userData.lightSpec) { g.updateMatrixWorld(true); g.userData.lightSpec.anchor.getWorldPosition(g.userData.light.position); } }
 
@@ -1280,7 +1403,7 @@ function pickUp(g) {
   if (net.online && id && id.startsWith('tmp-')) { flashHint('One moment, still saving that piece', 1200); return; }
   carry = { g, from: snapOf(g), rot: g.rotation.y, valid: true, sendT: 0 };
   if (net.online && id) net.socket.emit('lock', { id });
-  g.position.y = 0.04;                                   // lift it a little so it feels "picked up"
+  g.position.y += 0.04;                                  // lift it a little so it feels "picked up"
   const t = furnitureTypes.find(f => f.id === g.userData.id);
   flashHint(isTouch ? `Moving ${t.name}: aim, then ✔ Drop · ⟳ rotate · ✋ cancel` : `Moving ${t.name}: click to drop · R rotate · Esc/right-click cancel`, 3500);
   updateTouchLabels();
@@ -1290,10 +1413,11 @@ function updateCarry(dt) {
   const g = carry.g;
   if (!placed.includes(g)) { carry = null; carryMarker.visible = false; updateTouchLabels(); return; }   // deleted by someone/something
   raycaster.setFromCamera(aim(), camera);
+  floorPlane.constant = -levelY(me.level);
   const hit = raycaster.ray.intersectPlane(floorPlane, hitPoint);
   if (hit && hit.distanceTo(camera.position) <= 8) {
     const snap = 0.05;
-    g.position.set(Math.round(hit.x / snap) * snap, 0.04, Math.round(hit.z / snap) * snap);
+    g.position.set(Math.round(hit.x / snap) * snap, levelY(me.level) + 0.04, Math.round(hit.z / snap) * snap);
   }
   g.rotation.y = carry.rot;
   syncLight(g);
@@ -1301,22 +1425,22 @@ function updateCarry(dt) {
   const a = aabbOf(g);
   carryMarker.visible = true;
   carryMarker.scale.set(Math.max(0.2, a.maxX - a.minX), Math.max(0.2, a.maxZ - a.minZ), 1);
-  carryMarker.position.set((a.minX + a.maxX) / 2, 0.012, (a.minZ + a.maxZ) / 2);
+  carryMarker.position.set((a.minX + a.maxX) / 2, levelY(me.level) + 0.012, (a.minZ + a.maxZ) / 2);
   carryMarker.material.color.setHex(carry.valid ? 0x6ee7b7 : 0xf87171);
   shadowsDirty = true;                                   // let its shadow follow it
   carry.sendT += dt;
   if (net.online && g.userData.netId && carry.sendT > 0.1) {    // live preview for the others ~10×/s
     carry.sendT = 0;
-    net.socket.volatile.emit('drag', { id: g.userData.netId, x: g.position.x, z: g.position.z, rot: carry.rot });
+    net.socket.volatile.emit('drag', { id: g.userData.netId, x: g.position.x, z: g.position.z, rot: carry.rot, y: levelY(me.level) });
   }
 }
 function dropCarry() {
   if (!carry) return;
   if (!carry.valid) { flashHint("Can't put it there: something's in the way", 1400); return; }
-  const g = carry.g, from = carry.from, to = { x: g.position.x, z: g.position.z, rot: carry.rot };
+  const g = carry.g, from = carry.from, to = { x: g.position.x, z: g.position.z, rot: carry.rot, y: levelY(me.level) };
   carry = null; carryMarker.visible = false;
   commitMove(g, to);
-  if (Math.abs(from.x - to.x) + Math.abs(from.z - to.z) + Math.abs(from.rot - to.rot) > 0.001) record({ kind: 'move', uid: g.userData.uid, from, to });
+  if (Math.abs(from.x - to.x) + Math.abs(from.z - to.z) + Math.abs(from.rot - to.rot) + Math.abs(from.y - to.y) > 0.001) record({ kind: 'move', uid: g.userData.uid, from, to });
   else if (net.online && g.userData.netId) net.socket.emit('unlock', { id: g.userData.netId });
   if (navigator.vibrate) navigator.vibrate(15);
   updateTouchLabels();
@@ -1325,7 +1449,7 @@ function cancelCarry(notify = true) {
   if (!carry) return;
   const g = carry.g, f = carry.from;
   carry = null; carryMarker.visible = false;
-  g.position.set(f.x, 0, f.z); g.rotation.y = f.rot; g.userData.aabb = aabbOf(g); syncLight(g); markSceneChanged();
+  g.position.set(f.x, f.y || 0, f.z); g.rotation.y = f.rot; g.userData.aabb = aabbOf(g); syncLight(g); markSceneChanged();
   if (net.online && g.userData.netId) net.socket.emit('unlock', { id: g.userData.netId });
   if (notify) flashHint('Move cancelled', 1000);
   updateTouchLabels();
@@ -1337,7 +1461,7 @@ function applyAction(a, undo) {
   if (a.kind === 'place' || a.kind === 'remove') {
     const shouldExist = (a.kind === 'place') !== undo;    // undo place → remove it; undo remove → bring it back
     if (shouldExist) {
-      const g = userPlace(a.snap.type, a.snap.x, a.snap.z, a.snap.rot, { rec: false });
+      const g = userPlace(a.snap.type, a.snap.x, a.snap.z, a.snap.rot, { rec: false, y: a.snap.y || 0 });
       if (!isValid(g, g)) { /* placed anyway: it was valid when recorded */ }
       a.uid = g.userData.uid;
     } else {
@@ -1352,11 +1476,11 @@ function applyAction(a, undo) {
     if (g.userData.lockedBy) return fail(`${g.userData.lockedBy} is moving it`);
     const target = undo ? a.from : a.to;
     const before = snapOf(g);
-    g.position.set(target.x, 0, target.z); g.rotation.y = target.rot;
-    if (!isValid(g, g)) { g.position.set(before.x, 0, before.z); g.rotation.y = before.rot; return fail('something is in the way now'); }
+    g.position.set(target.x, target.y || 0, target.z); g.rotation.y = target.rot;
+    if (!isValid(g, g)) { g.position.set(before.x, before.y || 0, before.z); g.rotation.y = before.rot; return fail('something is in the way now'); }
     commitMove(g, target);
   } else if (a.kind === 'clear') {
-    if (undo) { a.uids = a.snaps.map(sn => userPlace(sn.type, sn.x, sn.z, sn.rot, { rec: false }).userData.uid); }
+    if (undo) { a.uids = a.snaps.map(sn => userPlace(sn.type, sn.x, sn.z, sn.rot, { rec: false, y: sn.y || 0 }).userData.uid); }
     else { a.snaps = placed.map(snapOf); if (net.online) net.socket.emit('clear'); [...placed].forEach(removeItem); }
   }
   return true;
@@ -1414,7 +1538,7 @@ function stageRoom() {
   userPlace('desk', 0.75, 5.62, P, NOREC);
   userPlace('chair', 0.75, 4.95, 0, NOREC);
   userPlace('bookshelf', -1.76, 2.4, Wt, NOREC);
-  userPlace('armchair', 2.6, 2.4, E, NOREC);
+  userPlace('armchair', 1.2, 2.6, E, NOREC);
   userPlace('plant', 3.1, 5.5, 0.4, NOREC);
   // Bathroom
   userPlace('bathtub', 6.0, 5.6, 0, NOREC);
@@ -1432,6 +1556,29 @@ function stageRoom() {
   userPlace('bench', -12, -10, Wt, NOREC);
   userPlace('bench', 0.75, -19.5, 0, NOREC);
   for (const [x, z] of [[-0.3, -11.5], [1.8, -11.5], [-0.3, -15.5], [1.8, -15.5]]) userPlace('gardenlamp', x, z, 0, NOREC);
+  // Upstairs (y = L1): master suite, lounge and the rooftop terrace
+  const UP = { rec: false, y: L1 };
+  userPlace('bed', -4.5, 4.83, P, UP);
+  userPlace('lamp', -6.0, 5.5, 0, UP);
+  userPlace('rug', -4.5, 2.6, 0, UP);
+  userPlace('armchair', -7.3, 2.2, Wt, UP);
+  userPlace('plant', -1.1, 5.55, 0.5, UP);
+  userPlace('tv', 7.79, 3.5, E, UP);
+  userPlace('sofa', 5.2, 3.5, Wt, UP);
+  userPlace('rug', 6.6, 3.5, Wt, UP);
+  userPlace('coffee', 6.6, 3.5, Wt, UP);
+  userPlace('desk', 1.2, 5.62, P, UP);
+  userPlace('chair', 1.2, 4.95, 0, UP);
+  userPlace('plant', 7.55, 5.55, 1.2, UP);
+  userPlace('table', -3.5, -3.0, 0, UP);
+  userPlace('chair', -3.9, -2.3, P, UP); userPlace('chair', -3.1, -2.3, P, UP);
+  userPlace('chair', -3.9, -3.7, 0, UP); userPlace('chair', -3.1, -3.7, 0, UP);
+  userPlace('lounger', 3.5, -4.6, P, UP);
+  userPlace('lounger', 5.5, -4.6, P, UP);
+  userPlace('parasol', 4.5, -4.4, 0, UP);
+  for (const [x, z] of [[-7.4, -5.5], [7.4, -5.5], [-7.4, 0.4], [7.4, 0.4]]) userPlace('plant', x, z, Math.random() * 6, UP);
+  userPlace('flowers', 0.5, -5.5, 0, UP);
+  userPlace('bench', -6.6, -1.5, Wt, UP);
 }
 
 // ---------------------------------------------------------------- real models
@@ -1459,10 +1606,10 @@ async function loadPolyHaven(type, src) {
   modelCache[type] = tpl;
   // Swap any procedural stand-ins already in the room
   for (const o of placed.filter(p => p.userData.id === type)) {
-    const { x, z } = o.position, r = o.rotation.y, netId = o.userData.netId;
+    const { x, z } = o.position, oy = levelY(levelOfY(o.position.y)), r = o.rotation.y, netId = o.userData.netId;
     const uid = o.userData.uid, lockedBy = o.userData.lockedBy, wasCarried = carry && carry.g === o;
-    removeItem(o); const ng = placeItem(type, x, z, r, { netId, uid }); ng.userData.lockedBy = lockedBy;
-    if (wasCarried) { carry.g = ng; ng.position.y = 0.04; }
+    removeItem(o); const ng = placeItem(type, x, z, r, { netId, uid, y: oy }); ng.userData.lockedBy = lockedBy;
+    if (wasCarried) { carry.g = ng; ng.position.y = oy + 0.04; }
   }
   if (furnitureTypes[selected].id === type) rebuildGhost();
 }
@@ -1474,10 +1621,11 @@ function loadModels() {
 stageRoom();
 
 // Ghost preview that follows the crosshair
-let selected = 0, rotation = 0, ghost = null, ghostValid = false;
+let selected = -1, rotation = 0, ghost = null, ghostValid = false;     // -1 = empty hand 🤚
 function rebuildGhost() {
   if (ghost) { scene.remove(ghost); ghost.traverse(o => { if (o.isMesh && !o.userData.sharedGeo) o.geometry.dispose(); }); }
-  ghostValid = true;
+  ghost = null; ghostValid = true;
+  if (selected < 0) return;                              // empty hand: nothing to place
   ghost = buildFurniture(furnitureTypes[selected].id);
   const lights = []; ghost.traverse(o => { if (o.isLight) lights.push(o); if (o.isMesh) { o.material = ghostOk; o.castShadow = o.receiveShadow = false; } });
   lights.forEach(l => l.parent.remove(l));
@@ -1491,10 +1639,11 @@ function updateGhost() {
   if (!ghost) return;
   if (!aimActive() || carry || hovered) { ghost.visible = false; return; }
   raycaster.setFromCamera(aim(), camera);
+  floorPlane.constant = -levelY(me.level);
   const hit = raycaster.ray.intersectPlane(floorPlane, hitPoint);
   if (!hit || hit.distanceTo(camera.position) > 8) { ghost.visible = false; return; }
   const snap = 0.05;
-  ghost.position.set(Math.round(hit.x / snap) * snap, 0, Math.round(hit.z / snap) * snap);
+  ghost.position.set(Math.round(hit.x / snap) * snap, levelY(me.level), Math.round(hit.z / snap) * snap);
   ghost.rotation.y = rotation; ghost.visible = true;
   const ok = isValid(ghost);
   if (ok !== ghostValid) { ghostValid = ok; ghost.traverse(o => { if (o.isMesh) o.material = ok ? ghostOk : ghostBad; }); }
@@ -1525,10 +1674,15 @@ function updateHover() {
 const keys = {}, vel = new THREE.Vector3(), wish = new THREE.Vector3(), fwd = new THREE.Vector3(), right = new THREE.Vector3(), UP = new THREE.Vector3(0, 1, 0);
 let bobT = 0;
 function blocked(x, z) {
+  const lv = me.level;
   if (x < -GW / 2 + RADIUS || x > GW / 2 - RADIUS || z < -GD / 2 + RADIUS || z > GD / 2 - RADIUS) return true;
-  for (const c of STATIC_COLLIDERS) if (x > c.minX - RADIUS && x < c.maxX + RADIUS && z > c.minZ - RADIUS && z < c.maxZ + RADIUS) return true;
+  if (lv === 1 && !inRect(x, z, STAIRS) && (Math.abs(x) > W / 2 - RADIUS || Math.abs(z) > D / 2 - RADIUS)) return true;   // stay on the upper floor
+  for (const c of STATIC_COLLIDERS) {
+    if (c.level !== lv || c.kind === 'pool') continue;
+    if (x > c.minX - RADIUS && x < c.maxX + RADIUS && z > c.minZ - RADIUS && z < c.maxZ + RADIUS) return true;
+  }
   for (const o of placed) {
-    if (o.userData.walkable || (carry && o === carry.g)) continue;
+    if (o.userData.walkable || (carry && o === carry.g) || levelOfY(o.position.y) !== lv) continue;
     const c = o.userData.aabb;
     if (x > c.minX - RADIUS && x < c.maxX + RADIUS && z > c.minZ - RADIUS && z < c.maxZ + RADIUS) return true;
   }
@@ -1549,15 +1703,15 @@ function updateMovement(dt) {
     else {
       vel.set(0, 0, 0);
       if (me.sit) { if (!placed.includes(me.sit.g)) standUp(); else { sitCameraPos(camera.position); return; } }
-      if (me.pose === 'floor') { camera.position.y = EYE - 0.85; return; }
-      if (hsFrozen()) { camera.position.y = EYE; return; }
+      if (me.pose === 'floor') { camera.position.y = me.floorY + EYE - 0.85; return; }
+      if (hsFrozen()) { camera.position.y = me.floorY + EYE; return; }
     }
   }
   camera.getWorldDirection(fwd); fwd.y = 0; fwd.normalize();     // walk on the floor, never fly
   right.crossVectors(fwd, UP).normalize();
   wish.set(0, 0, 0).addScaledVector(fwd, f).addScaledVector(right, r);
   const wl = wish.length(); if (wl > 1) wish.divideScalar(wl);      // analog stick = analog speed
-  wish.multiplyScalar(speed * (joy.run ? 1.6 : 1));
+  wish.multiplyScalar(speed * (joy.run ? 1.6 : 1) * (me.swimming ? 0.55 : 1));
   vel.lerp(wish, 1 - Math.exp(-10 * dt));
   // Axis-separated collision = you slide along walls instead of sticking to them.
   // If something was placed/loaded on top of you, let you walk out instead of trapping you.
@@ -1568,9 +1722,21 @@ function updateMovement(dt) {
   camera.position.z = THREE.MathUtils.clamp(camera.position.z, -GD / 2 + RADIUS, GD / 2 - RADIUS);
   const s = Math.min(vel.length() / 2.4, 1.6);
   bobT += dt * s * 9;
+  // Which floor am I on? The staircase decides: past halfway up = upstairs.
+  const px = camera.position.x, pz = camera.position.z;
+  if (inRect(px, pz, STAIRS)) me.level = levelOfY(floorAt(px, pz, me.level));
+  const targetFloor = floorAt(px, pz, me.level);
+  me.floorY += (targetFloor - me.floorY) * Math.min(1, dt * (targetFloor < me.floorY - 0.5 ? 6 : 14));   // smooth steps, gentle drop into the pool
+  // Swimming
+  const swimming = me.level === 0 && inRect(px, pz, POOL);
+  if (swimming && !me.swimming) { splash(); achieve('swim'); }
+  me.swimming = swimming;
   // Jumping: simple gravity
   if (me.vy !== 0 || me.jy > 0) { me.vy -= 12 * dt; me.jy = Math.max(0, me.jy + me.vy * dt); if (me.jy === 0) me.vy = 0; }
-  camera.position.y = EYE + me.jy + Math.sin(bobT) * 0.022 * Math.min(s, 1) * (me.jy > 0 ? 0 : 1);
+  const swimBob = swimming ? Math.sin(clock.elapsedTime * 2.2) * 0.05 : 0;
+  camera.position.y = me.floorY + EYE + me.jy + swimBob + Math.sin(bobT) * 0.022 * Math.min(s, 1) * (me.jy > 0 || swimming ? 0 : 1);
+  if (me.level === 1) achieve(pz < 1 ? 'roof' : 'upstairs');
+  if (me.level === 1 && pz < 1 && tod > 0.7 && look.pitch > 0.5) achieve('stars');
 }
 
 // ================================================================ environment state
@@ -1604,6 +1770,7 @@ function applyLighting() {
   buildingMats.forEach(m => m.emissiveIntensity = 1.4 * (1 - dayK));
   dustMat.opacity = 0.2 * dayK * (1 - rainMix);
   rainMat.uniforms.uOpacity.value = 0.4 * rainMix; rain.visible = rainMix > 0.01;
+  starMat.opacity = 0.95 * (1 - dayK) * (1 - rainMix); stars.visible = starMat.opacity > 0.01; stars.position.copy(camera.position);
   renderer.toneMappingExposure = baseExposure * THREE.MathUtils.lerp(1.0, 1.3, 1 - dayK);
 }
 function updateRain(t) { rainMat.uniforms.uTime.value = t; }
@@ -1646,15 +1813,27 @@ function setRainAudio(on) {
 const bar = document.getElementById('inventory-bar');
 function buildInventoryUI() {
   bar.innerHTML = '';
+  const hand = document.createElement('button');
+  if (selected < 0) hand.className = 'sel';
+  hand.innerHTML = `<span class="ic">🤚</span><span>Hand</span><span class="k">Esc</span>`;
+  hand.title = 'Empty hand: walk around and move things without placing anything';
+  hand.onclick = () => select(-1);
+  bar.appendChild(hand);
   furnitureTypes.forEach((item, i) => {
     const b = document.createElement('button');
     if (i === selected) b.className = 'sel';
     b.innerHTML = `<span class="ic">${item.icon}</span><span>${item.name}</span>${i < 10 ? `<span class="k">${(i + 1) % 10}</span>` : ''}`;
-    b.onclick = () => select(i);
+    b.onclick = () => select(i === selected ? -1 : i);      // click the selected item again to put it away
     bar.appendChild(b);
   });
 }
-function select(i) { selected = (i + furnitureTypes.length) % furnitureTypes.length; buildInventoryUI(); rebuildGhost(); }
+function select(i) {
+  const n = furnitureTypes.length + 1;                   // +1 for the empty hand
+  selected = ((i + 1) % n + n) % n - 1;
+  buildInventoryUI(); rebuildGhost();
+  if (selected < 0 && started) flashHint('🤚 Empty hand: nothing will be placed', 1200);
+  const sel = bar.querySelector('.sel'); if (sel) sel.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+}
 const btnNight = document.getElementById('btn-daynight'), btnRain = document.getElementById('btn-weather'), btnQ = document.getElementById('btn-quality');
 const expLabel = document.getElementById('exposure');
 function setEnvUI() { btnNight.textContent = todTarget ? '☀️' : '🌙'; btnRain.classList.toggle('on', !!rainTarget); setRainAudio(!!rainTarget); document.getElementById('btn-party').classList.toggle('on', !!partyOn); setPartyAudio(!!partyOn); }
@@ -1726,7 +1905,7 @@ function primaryAction(button) {
   if (button === 0) {
     if (carry) dropCarry();                                        // click while carrying = drop
     else if (hovered) pickUp(hovered);                             // click on furniture = pick it up
-    else if (ghost && ghost.visible && ghostValid) userPlace(furnitureTypes[selected].id, ghost.position.x, ghost.position.z, rotation);
+    else if (ghost && ghost.visible && ghostValid) userPlace(furnitureTypes[selected].id, ghost.position.x, ghost.position.z, rotation, { y: levelY(me.level) });
   }
   if (button === 2) { if (carry) cancelCarry(); else if (hovered) userRemove(hovered); }
 }
@@ -1741,7 +1920,8 @@ document.addEventListener('keydown', (e) => {
   if (e.code === 'KeyR') { if (carry) carry.rot += step; else rotation += step; }
   if ((e.metaKey || e.ctrlKey) && e.code === 'KeyZ') { e.preventDefault(); if (e.shiftKey) redo(); else undo(); return; }
   if ((e.metaKey || e.ctrlKey) && e.code === 'KeyY') { e.preventDefault(); redo(); return; }
-  if (e.code === 'Escape' && carry) cancelCarry();
+  if (e.code === 'Escape') { if (carry) cancelCarry(); else if (selected >= 0) select(-1); }
+  if (e.code === 'Backquote') select(-1);
   if (e.code === 'Delete' || e.code === 'Backspace') { if (carry) userRemove(carry.g); else if (hovered) userRemove(hovered); }
   if (e.code === 'KeyE') interact();
   if (e.code === 'Space') { e.preventDefault(); jump(); }
@@ -1905,16 +2085,79 @@ function setupTouch() {
     if (carry) { dropCarry(); return; }
     updateGhost();
     if (ghost && ghost.visible && ghostValid) { primaryAction(0); if (navigator.vibrate) navigator.vibrate(15); }
-    else flashHint(ghost && ghost.visible ? "Can't place there: something's in the way" : 'Aim the dot at the floor first', 1500);
+    else flashHint(selected < 0 ? '🤚 Your hand is empty: pick an item from the bar first' : ghost && ghost.visible ? "Can't place there: something's in the way" : 'Aim the dot at the floor first', 1500);
   });
   tap('t-rot', () => { if (carry) carry.rot += Math.PI / 4; else rotation += Math.PI / 4; });
   tap('t-del', () => { if (carry) { userRemove(carry.g); return; } if (hovered) { userRemove(hovered); if (navigator.vibrate) navigator.vibrate(25); } else flashHint('Aim the dot at a piece of furniture', 1500); });
 }
 if (isTouch) setupTouch();
 
+// ================================================================ achievements, stars, splash
+const ACHIEVEMENTS = [
+  { id: 'firstPlace', icon: '🛋️', name: 'Interior designer', desc: 'Place your first item' },
+  { id: 'sit', icon: '🪑', name: 'Take a seat', desc: 'Sit on a sofa, chair or bench' },
+  { id: 'nap', icon: '😴', name: 'Nap time', desc: 'Lie down on a bed or sun lounger' },
+  { id: 'upstairs', icon: '🪜', name: 'Moving up', desc: 'Climb the stairs to the upper floor' },
+  { id: 'roof', icon: '🌇', name: 'On top of the world', desc: 'Step out onto the rooftop terrace' },
+  { id: 'swim', icon: '🏊', name: 'Make a splash', desc: 'Get into the pool' },
+  { id: 'dog', icon: '🐶', name: 'Good boy', desc: 'Call Bruno the dog' },
+  { id: 'party', icon: '🪩', name: 'Party starter', desc: 'Turn on party mode' },
+  { id: 'dance', icon: '💃', name: 'Dance floor', desc: 'Do the dance emote' },
+  { id: 'garden', icon: '🌳', name: 'Green thumb', desc: 'Place 3 garden items' },
+  { id: 'stars', icon: '🌌', name: 'Stargazer', desc: 'Look up at the night sky from the roof' },
+  { id: 'seek', icon: '🙈', name: 'Ready or not', desc: 'Play a round of hide & seek' },
+];
+const GARDEN_TYPES = new Set(['tree', 'bush', 'flowers', 'bench', 'lounger', 'parasol', 'gardenlamp']);
+let achDone = new Set(), gardenPlaced = 0;
+try { achDone = new Set(JSON.parse(localStorage.getItem('archviz-achievements') || '[]')); } catch (e) { /* storage unavailable */ }
+let chimeSynth = null;
+function achieve(id) {
+  if (!started || achDone.has(id)) return;
+  const a = ACHIEVEMENTS.find(x => x.id === id); if (!a) return;
+  achDone.add(id);
+  try { localStorage.setItem('archviz-achievements', JSON.stringify([...achDone])); } catch (e) { /* ignore */ }
+  const t = document.getElementById('ach-toast');
+  t.innerHTML = `<span class="ai">${a.icon}</span><div><small>🏆 Achievement unlocked · ${achDone.size}/${ACHIEVEMENTS.length}</small><b>${a.name}</b><span>${a.desc}</span></div>`;
+  t.classList.remove('show'); void t.offsetWidth; t.classList.add('show');
+  clearTimeout(achieve._t); achieve._t = setTimeout(() => t.classList.remove('show'), 4000);
+  updateAchUI();
+  if (typeof Tone !== 'undefined') {
+    try {
+      if (!chimeSynth) chimeSynth = new Tone.PolySynth(Tone.Synth, { oscillator: { type: 'sine' }, envelope: { attack: 0.005, decay: 0.3, sustain: 0, release: 0.4 }, volume: -14 }).toDestination();
+      const now = Tone.now(); chimeSynth.triggerAttackRelease('E5', '16n', now); chimeSynth.triggerAttackRelease('B5', '8n', now + 0.12);
+    } catch (e) { /* optional */ }
+  }
+}
+function achievePlaced(type) { achieve('firstPlace'); if (GARDEN_TYPES.has(type) && ++gardenPlaced >= 3) achieve('garden'); }
+function updateAchUI() {
+  const btn = document.getElementById('btn-ach'); if (btn) btn.textContent = `🏆 ${achDone.size}/${ACHIEVEMENTS.length}`;
+  const grid = document.getElementById('ach-grid'); if (!grid) return;
+  grid.innerHTML = ACHIEVEMENTS.map(a => `<div class="ach ${achDone.has(a.id) ? 'done' : ''}"><span>${achDone.has(a.id) ? a.icon : '🔒'}</span><b>${a.name}</b><small>${a.desc}</small></div>`).join('');
+}
+// Stars for clear nights (a dome of points that travels with the camera)
+const stars = (() => {
+  const N = 1800, pos = new Float32Array(N * 3);
+  for (let i = 0; i < N; i++) {
+    const u = Math.random(), v = 0.06 + Math.random() * 0.94, th = u * Math.PI * 2, r = 900, sy = v, sr = Math.sqrt(1 - sy * sy);
+    pos.set([Math.cos(th) * sr * r, sy * r, Math.sin(th) * sr * r], i * 3);
+  }
+  const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  return new THREE.Points(geo, starMat);
+})();
+stars.frustumCulled = false; stars.visible = false; scene.add(stars);
+let splashSynth = null;
+function splash() {
+  flashHint('🏊 Splash! You are swimming', 1500);
+  if (typeof Tone === 'undefined') return;
+  try {
+    if (!splashSynth) splashSynth = new Tone.NoiseSynth({ noise: { type: 'pink' }, envelope: { attack: 0.005, decay: 0.6, sustain: 0 }, volume: -12 }).toDestination();
+    splashSynth.triggerAttackRelease('8n');
+  } catch (e) { /* optional */ }
+}
+
 // ================================================================ fun: sit, jump, emotes, party, pet, hide & seek
 // ---- local player state
-const me = { jy: 0, vy: 0, pose: 'stand', sit: null };
+const me = { jy: 0, vy: 0, pose: 'stand', sit: null, level: 0, floorY: 0, swimming: false };
 const SEATS = {
   sofa: { y: 0.5, spots: [[-0.62, 0.12], [0, 0.12], [0.62, 0.12]] },
   chair: { y: 0.5, spots: [[0, 0.03]] },
@@ -1937,7 +2180,8 @@ function trySit(g) {
   if (bd > 3) { flashHint('Get a bit closer to sit', 1200); return true; }
   if (carry) cancelCarry(false);
   const front = new THREE.Vector3(Math.sin(g.rotation.y), 0, Math.cos(g.rotation.y));   // furniture faces its local +Z
-  me.sit = { g, lie: !!seat.lie, pos: best, front, yaw: g.rotation.y + Math.PI, pre: camera.position.clone() };
+  me.sit = { g, lie: !!seat.lie, pos: best, front, yaw: g.rotation.y + Math.PI, pre: camera.position.clone(), preLevel: me.level };
+  achieve(seat.lie ? 'nap' : 'sit');
   me.pose = seat.lie ? 'lie' : 'sit'; me.jy = 0; me.vy = 0; vel.set(0, 0, 0);
   look.yaw = me.sit.yaw; look.pitch = seat.lie ? 0.45 : -0.05; applyLook();
   flashHint(seat.lie ? 'Lying down 😴 — move to get up' : 'Sitting 🪑 — move to stand up', 1800);
@@ -1949,7 +2193,7 @@ function sitCameraPos(out) {
   return out.copy(st.pos).addScaledVector(st.front, -0.05).setY(st.pos.y + 0.72);
 }
 function standUp() {
-  if (me.sit) { camera.position.x = me.sit.pre.x; camera.position.z = me.sit.pre.z; }
+  if (me.sit) { camera.position.x = me.sit.pre.x; camera.position.z = me.sit.pre.z; me.level = me.sit.preLevel; }
   me.sit = null; me.pose = 'stand';
 }
 function jump() {
@@ -1967,10 +2211,10 @@ function myPose() {
   const p = camera.position;
   if (me.sit) {
     const st = me.sit;
-    if (st.lie) { _v.copy(st.pos).addScaledVector(st.front, 0.85); return { x: _v.x, z: _v.z, yaw: st.yaw, pose: 'lie', sy: st.pos.y }; }
-    return { x: st.pos.x, z: st.pos.z, yaw: st.yaw, pose: 'sit', sy: st.pos.y };
+    if (st.lie) { _v.copy(st.pos).addScaledVector(st.front, 0.85); return { x: _v.x, z: _v.z, yaw: st.yaw, pose: 'lie', sy: st.pos.y, base: levelY(st.preLevel) }; }
+    return { x: st.pos.x, z: st.pos.z, yaw: st.yaw, pose: 'sit', sy: st.pos.y, base: levelY(st.preLevel) };
   }
-  return { x: p.x, z: p.z, yaw: look.yaw, pose: me.pose, sy: 0 };
+  return { x: p.x, z: p.z, yaw: look.yaw, pose: me.swimming ? 'swim' : me.pose, sy: 0, base: me.floorY };
 }
 
 // ---- emotes
@@ -1993,6 +2237,7 @@ function emojiSprite(emoji, size = 0.36) {
 }
 function doEmote(id) {
   const e = EMOTES.find(x => x.id === id); if (!e || !started) return;
+  if (id === 'dance') achieve('dance');
   if (id === 'jump') jump();
   else if (id === 'sit') { if (me.sit) standUp(); me.pose = 'floor'; vel.set(0, 0, 0); }
   else if (me.sit && id === 'dance') standUp();
@@ -2050,7 +2295,7 @@ function setPartyAudio(on) {
     else if (!on && partyPlaying && partyMusic) { partyMusic.loop.stop(); Tone.Transport.stop(); partyPlaying = false; }
   } catch (e) { /* audio is optional */ }
 }
-function toggleParty() { partyOn = partyOn ? 0 : 1; setEnvUI(); sendEnv(); flashHint(partyOn ? '🪩 Party time!' : 'Party over', 1500); }
+function toggleParty() { partyOn = partyOn ? 0 : 1; if (partyOn) achieve('party'); setEnvUI(); sendEnv(); flashHint(partyOn ? '🪩 Party time!' : 'Party over', 1500); }
 function updateParty(dt, t) {
   partyMix += (partyOn - partyMix) * (1 - Math.exp(-3 * dt));
   const on = partyMix > 0.01;
@@ -2099,7 +2344,7 @@ function makeDog() {
   g.userData = { body, head, legs, tail, zzz, tag };
   return g;
 }
-const pet = { g: null, x: -4.6, z: -0.9, yaw: 0, targetId: null, targetName: '', walk: 0, phase: 0, stuckT: 0, lastSeen: { x: 0, z: 0, t: 0 }, sleeping: true };
+const pet = { g: null, x: -4.6, z: -0.9, yaw: 0, level: 0, levelT: 0, targetId: null, targetName: '', walk: 0, phase: 0, stuckT: 0, lastSeen: { x: 0, z: 0, t: 0 }, sleeping: true };
 function initPet() { pet.g = makeDog(); pet.g.position.set(pet.x, 0, pet.z); scene.add(pet.g); }
 function petTargetPos() {
   if (!pet.targetId) return null;
@@ -2109,10 +2354,12 @@ function petTargetPos() {
 function petBlocked(x, z) {
   const R = 0.22;
   if (x < -GW / 2 + R || x > GW / 2 - R || z < -GD / 2 + R || z > GD / 2 - R) return true;
-  for (const c of STATIC_COLLIDERS) if (x > c.minX - R && x < c.maxX + R && z > c.minZ - R && z < c.maxZ + R) return true;
+  if (pet.level === 1 && !inRect(x, z, STAIRS) && (Math.abs(x) > W / 2 - R || Math.abs(z) > D / 2 - R)) return true;
+  for (const c of STATIC_COLLIDERS) if (c.level === pet.level && x > c.minX - R && x < c.maxX + R && z > c.minZ - R && z < c.maxZ + R) return true;
   return false;
 }
 function callPet() {
+  achieve('dog');
   if (net.online) { net.socket.emit('pet:call'); return; }
   setPetTarget(pet.targetId === 'me' ? null : 'me', myName);
 }
@@ -2133,6 +2380,15 @@ function updatePet(dt, t) {
   if (!pet.g) return;
   const tp = petTargetPos();
   let goal = null, wantSleep = false;
+  // Different floor from the owner? Bruno takes a moment, then appears next to them.
+  if (tp) {
+    const mine = pet.targetId === 'me' || pet.targetId === net.myId;
+    const tl = mine ? me.level : levelOfY(tp.y);
+    if (tl !== pet.level && !inRect(pet.x, pet.z, STAIRS)) {
+      pet.levelT += dt;
+      if (pet.levelT > 1.5) { const a = Math.random() * Math.PI * 2; pet.x = tp.x + Math.cos(a) * 1.1; pet.z = tp.z + Math.sin(a) * 1.1; pet.level = tl; pet.levelT = 0; }
+    } else pet.levelT = 0;
+  }
   if (tp) {
     if (Math.hypot(tp.x - pet.lastSeen.x, tp.z - pet.lastSeen.z) > 0.05) { pet.lastSeen = { x: tp.x, z: tp.z, t }; }
     if (t - pet.lastSeen.t > 40) wantSleep = true;                       // owner idle for a while → nap
@@ -2146,7 +2402,7 @@ function updatePet(dt, t) {
     }
   } else wantSleep = true;
   if (wantSleep) {
-    const rugs = placed.filter(o => o.userData.id === 'rug');
+    const rugs = placed.filter(o => o.userData.id === 'rug' && levelOfY(o.position.y) === pet.level);
     let best = null, bd = Infinity;
     for (const r of rugs) { const d = Math.hypot(r.position.x - pet.x, r.position.z - pet.z); if (d < bd) { bd = d; best = r; } }
     if (best && bd > 0.3) goal = { x: best.position.x, z: best.position.z };
@@ -2166,7 +2422,8 @@ function updatePet(dt, t) {
   pet.walk += ((goal ? Math.min(speed / 3, 1.3) : 0) - pet.walk) * Math.min(1, dt * 8);
   pet.phase += dt * (3 + speed * 4);
   const { body, head, legs, tail, zzz, tag } = pet.g.userData;
-  pet.g.position.set(pet.x, 0, pet.z); pet.g.rotation.y = pet.yaw;
+  if (inRect(pet.x, pet.z, STAIRS)) pet.level = levelOfY(floorAt(pet.x, pet.z, pet.level));
+  pet.g.position.set(pet.x, floorAt(pet.x, pet.z, pet.level), pet.z); pet.g.rotation.y = pet.yaw;
   const sw = Math.sin(pet.phase) * pet.walk;
   legs[0].rotation.x = sw * 0.7; legs[3].rotation.x = sw * 0.7; legs[1].rotation.x = -sw * 0.7; legs[2].rotation.x = -sw * 0.7;
   tail.rotation.z = Math.sin(t * (pet.sleeping ? 1.5 : 14)) * (pet.sleeping ? 0.08 : 0.5);
@@ -2242,6 +2499,10 @@ function setupFunUI() {
   document.getElementById('btn-hs').onclick = () => started && toggleHideSeek();
   const tap = (id, fn) => document.getElementById(id).addEventListener('click', (e) => { e.preventDefault(); if (started) fn(); });
   tap('t-jump', jump); tap('t-sit', interact); tap('t-emote', toggleBar);
+  const panel = document.getElementById('ach-panel');
+  document.getElementById('btn-ach').onclick = () => { updateAchUI(); panel.classList.toggle('open'); };
+  document.getElementById('ach-close').onclick = () => panel.classList.remove('open');
+  updateAchUI();
 }
 
 // ================================================================ multiplayer
@@ -2385,14 +2646,19 @@ function updateAvatars(dt) {
     legs[0].rotation.set(sw * 0.6, 0, 0); legs[1].rotation.set(-sw * 0.6, 0, 0);
     arms[0].rotation.set(-sw * 0.5 + Math.sin(t * 1.6) * 0.03, 0, -0.06); arms[1].rotation.set(sw * 0.5 - Math.sin(t * 1.6) * 0.03, 0, 0.06);
     const pose = tg.pose || 'stand';
+    const base = tg.y || 0;
     if (pose === 'sit') {
-      body.position.y = (tg.sy || 0.5) + 0.08 - 0.9 * kk;
+      body.position.y = (tg.sy || 0.5) - base + 0.08 - 0.9 * kk;
       legs[0].rotation.x = legs[1].rotation.x = 1.45; arms[0].rotation.x = arms[1].rotation.x = 0.55;
     } else if (pose === 'lie') {
-      body.rotation.x = Math.PI / 2; body.position.y = (tg.sy || 0.6) + 0.13;
+      body.rotation.x = Math.PI / 2; body.position.y = (tg.sy || 0.6) - base + 0.13;
       legs[0].rotation.x = legs[1].rotation.x = 0; arms[0].rotation.set(0, 0, -0.15); arms[1].rotation.set(0, 0, 0.15);
     } else if (pose === 'floor') {
       body.position.y = -0.55; legs[0].rotation.x = legs[1].rotation.x = 1.5; arms[0].rotation.x = arms[1].rotation.x = 0.4;
+    } else if (pose === 'swim') {          // front crawl at the water surface
+      body.rotation.x = -Math.PI / 2 + 0.25; body.position.y = 0.95 + Math.sin(t * 3) * 0.03;
+      arms[0].rotation.set(Math.sin(t * 4) * 2.6, 0, -0.1); arms[1].rotation.set(Math.sin(t * 4 + Math.PI) * 2.6, 0, 0.1);
+      legs[0].rotation.x = Math.sin(t * 8) * 0.35; legs[1].rotation.x = -Math.sin(t * 8) * 0.35;
     }
     let em = p.emote && t - p.emote.t0 < p.emote.dur ? p.emote.id : null;
     if (!em && partyMix > 0.3 && pose === 'stand' && p.walk < 0.15) em = 'dance';   // party: idle people dance
@@ -2419,7 +2685,7 @@ function connectNet() {
     [...placed].forEach(removeItem);                         // the server's room is the truth
     if (carry) cancelCarry(false);
     undoStack.length = 0; redoStack.length = 0; updateUndoUI();
-    if (objects.length) objects.forEach(o => { const g = placeItem(o.type, o.x, o.z, o.rot, { netId: o.id }); g.userData.lockedBy = o.lockName || null; });
+    if (objects.length) objects.forEach(o => { const g = placeItem(o.type, o.x, o.z, o.rot, { netId: o.id, y: o.y || 0 }); g.userData.lockedBy = o.lockName || null; });
     else stageRoom();                                        // first visitor furnishes the empty room
     [...players.keys()].forEach(removePlayer);
     list.forEach(p => { if (p.id !== you) addPlayer(p); });
@@ -2432,7 +2698,7 @@ function connectNet() {
   socket.on('placed', ({ item, tempId }) => {
     const mine = tempId && placed.find(o => o.userData.netId === tempId);
     if (mine) { mine.userData.netId = item.id; return; }  // our own placement confirmed
-    if (!placed.some(o => o.userData.netId === item.id)) placeItem(item.type, item.x, item.z, item.rot, { netId: item.id });
+    if (!placed.some(o => o.userData.netId === item.id)) placeItem(item.type, item.x, item.z, item.rot, { netId: item.id, y: item.y || 0 });
   });
   socket.on('rejected', ({ tempId, reason }) => {
     removeItem(placed.find(o => o.userData.netId === tempId));
@@ -2447,17 +2713,17 @@ function connectNet() {
     if (carry && carry.g.userData.netId === id) cancelCarry(false);
     flashHint(name ? `🔒 ${name} is moving that` : 'That piece no longer exists', 1800);
   });
-  socket.on('dragged', ({ id, x, z, rot }) => { const g = byNet(id); if (g) remoteDrags.set(id, { g, x, z, rot }); });
-  const settle = (id, x, z, rot, aabb) => {
+  socket.on('dragged', ({ id, x, z, rot, y }) => { const g = byNet(id); if (g) remoteDrags.set(id, { g, x, z, rot, y: y || 0 }); });
+  const settle = (id, x, z, rot, aabb, y) => {
     remoteDrags.delete(id);
     const g = byNet(id); if (!g || (carry && carry.g === g)) return;
     g.userData.lockedBy = null;
-    g.position.set(x, 0, z); g.rotation.y = rot; g.userData.aabb = aabb || aabbOf(g); syncLight(g); markSceneChanged();
+    g.position.set(x, y || 0, z); g.rotation.y = rot; g.userData.aabb = aabbOf(g); syncLight(g); markSceneChanged();
   };
-  socket.on('objMoved', ({ id, x, z, rot, aabb }) => settle(id, x, z, rot, aabb));
-  socket.on('unlocked', ({ id, x, z, rot }) => settle(id, x, z, rot));
-  socket.on('objMoveRejected', ({ id, x, z, rot, reason }) => {
-    const g = byNet(id); if (g) { g.position.set(x, 0, z); g.rotation.y = rot; g.userData.aabb = aabbOf(g); syncLight(g); markSceneChanged(); }
+  socket.on('objMoved', ({ id, x, z, rot, aabb, y }) => settle(id, x, z, rot, aabb, y));
+  socket.on('unlocked', ({ id, x, z, rot, y }) => settle(id, x, z, rot, null, y));
+  socket.on('objMoveRejected', ({ id, x, z, rot, reason, y }) => {
+    const g = byNet(id); if (g) { g.position.set(x, y || 0, z); g.rotation.y = rot; g.userData.aabb = aabbOf(g); syncLight(g); markSceneChanged(); }
     flashHint(`Server put it back: ${reason}`, 2000);
   });
   socket.on('env', applyRemoteEnv);
@@ -2467,6 +2733,7 @@ function connectNet() {
     const was = hs.phase;
     Object.assign(hs, st); hs.offset = st.now - Date.now();
     if (was !== 'hiding' && hs.phase === 'hiding') flashHint(iAmSeeker() ? '🙈 You are the seeker! Wait while everyone hides…' : `🏃 Hide! ${hs.seekerName} is the seeker`, 3500);
+    if (hs.phase === 'seeking') achieve('seek');
     if (was === 'hiding' && hs.phase === 'seeking') flashHint(iAmSeeker() ? '🔎 Go find them!' : '🤫 The seeker is coming…', 2500);
   });
   socket.on('hs:found', ({ name }) => flashHint(`🔎 ${name} was found!`, 2000));
@@ -2511,7 +2778,7 @@ renderer.setAnimationLoop(() => {
   if (net.remoteDrags) net.remoteDrags.forEach((d) => {                  // others moving furniture: glide it
     const g = d.g, k = 1 - Math.exp(-14 * dt);
     if (!placed.includes(g)) return;
-    g.position.x += (d.x - g.position.x) * k; g.position.z += (d.z - g.position.z) * k; g.position.y = 0.04;
+    g.position.x += (d.x - g.position.x) * k; g.position.z += (d.z - g.position.z) * k; g.position.y = d.y + 0.04;
     let dr = d.rot - g.rotation.y; g.rotation.y += Math.atan2(Math.sin(dr), Math.cos(dr)) * k;
     syncLight(g); shadowsDirty = true;
   });
@@ -2554,7 +2821,7 @@ renderer.setAnimationLoop(() => {
   sendTimer += dt;
   if (net.online && sendTimer > 1 / 12) {
     sendTimer = 0;
-    const mp = myPose(), next = { ...mp, pitch: look.pitch, y: me.jy };
+    const mp = myPose(), next = { x: mp.x, z: mp.z, yaw: mp.yaw, pose: mp.pose, sy: mp.sy, pitch: look.pitch, y: mp.base + me.jy };
     if (Math.abs(next.x - lastSent.x) + Math.abs(next.z - lastSent.z) + Math.abs(next.yaw - lastSent.yaw) + Math.abs(next.pitch - lastSent.pitch) + Math.abs(next.y - lastSent.y) > 0.002 || next.pose !== lastSent.pose) {
       lastSent = next;
       net.socket.volatile.emit('move', next);
@@ -2570,6 +2837,11 @@ function loadFloorTextures() {
     diff.colorSpace = THREE.SRGBColorSpace;
     Object.assign(MAT.floor, { map: diff, normalMap: nor, roughnessMap: rough, bumpMap: null, roughness: 1 });
     MAT.floor.needsUpdate = true;
+    if (MAT.floorUpper) {
+      const up = (t) => { const c = t.clone(); c.repeat.set(1 / 2, 1 / 2); c.needsUpdate = true; return c; };
+      Object.assign(MAT.floorUpper, { map: up(diff), normalMap: up(nor), roughnessMap: up(rough), bumpMap: null, roughness: 1 });
+      MAT.floorUpper.needsUpdate = true;
+    }
     markSceneChanged();
   }).catch(e => console.warn('Floor textures unavailable, keeping procedural floor:', e && e.message));
 }
