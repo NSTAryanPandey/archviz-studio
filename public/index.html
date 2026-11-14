@@ -373,7 +373,7 @@ function makeFloorTextures() {
 }
 
 const plasterN = valueNoise(3);
-const plasterBump = genTex(512, 512, false, [3, 1], (x, y) => { const v = 120 + 110 * fbm(plasterN, x * 0.5, y * 0.5, 5); return [v, v, v]; });
+const plasterBump = genTex(512, 512, false, [0.5, 0.5], (x, y) => { const v = 120 + 110 * fbm(plasterN, x * 0.5, y * 0.5, 5); return [v, v, v]; });
 const weaveN = valueNoise(11);
 const weave = genTex(128, 128, false, [10, 10], (x, y) => {
   const over = (Math.floor(x / 4) + Math.floor(y / 4)) % 2;
@@ -387,11 +387,34 @@ const grainTex = genTex(512, 512, true, [1, 1], (x, y) => {
   const k = 0.78 + 0.18 * g + 0.1 * ring; return [235 * k, 225 * k, 212 * k];
 });
 const tileN = valueNoise(17);
+const marbleN = valueNoise(57), marbleN2 = valueNoise(91);
+function marbleAt(x, y, s = 1) {        // white Carrara-style marble with soft grey veins
+  const w = fbm(marbleN, x * 0.006 * s, y * 0.006 * s, 5) * 7;
+  const v1 = Math.abs(Math.sin((x * 0.004 * s + y * 0.011 * s + w) * Math.PI));
+  const v2 = Math.abs(Math.sin((x * 0.013 * s - y * 0.004 * s + fbm(marbleN2, x * 0.01 * s, y * 0.01 * s, 4) * 5) * Math.PI));
+  const vein = Math.pow(1 - v1, 22) * 0.55 + Math.pow(1 - v2, 40) * 0.3;
+  const base = 238 + 10 * fbm(marbleN2, x * 0.02 * s, y * 0.02 * s, 3);
+  return [base - vein * 150, base - vein * 148, base - vein * 140];
+}
+const marbleTex = genTex(1024, 1024, true, [0.5, 0.5], (x, y) => marbleAt(x, y));
+const travN = valueNoise(73);
+const travertineTex = genTex(512, 512, true, [1 / 1.2, 1 / 1.2], (x, y) => {      // 1.2 m × 0.6 m stone panels
+  if ((x % 512) < 3 || (y % 256) < 3) return [168, 158, 142];
+  const streak = fbm(travN, x * 0.06 + Math.floor(y / 256) * 37, y * 0.9, 4), pores = travN(x * 2.2, y * 2.2) > 0.82 ? -18 : 0;
+  const k = 0.92 + 0.12 * streak;
+  return [214 * k + pores, 201 * k + pores, 178 * k + pores];
+});
+const woodCladN = valueNoise(83);
+const woodCladTex = genTex(512, 512, true, [1 / 1.2, 1 / 1.2], (x, y) => {       // vertical 15 cm boards
+  if ((x % 64) < 2) return [28, 20, 15];
+  const board = Math.floor(x / 64), g = fbm(woodCladN, x * 0.5 + board * 19, y * 0.06, 4), tone = 0.82 + (board * 37 % 11) / 55;
+  const k = tone * (0.8 + 0.3 * g);
+  return [104 * k, 72 * k, 48 * k];
+});
 const tileTex = genTex(512, 512, true, [3.7, 4.1], (x, y) => {
-  const grout = (x % 256) < 4 || (y % 256) < 4;
-  if (grout) return [150, 146, 140];
-  const v = 214 + 18 * fbm(tileN, x * 0.5, y * 0.5, 4) + ((Math.floor(x / 256) + Math.floor(y / 256)) % 2) * 6;
-  return [v, v - 4, v - 10];
+  const grout = (x % 256) < 3 || (y % 256) < 3;
+  if (grout) return [190, 186, 180];
+  return marbleAt(x + Math.floor(x / 256) * 311, y + Math.floor(y / 256) * 173, 1.6);
 });
 const rugN = valueNoise(5);
 const rugTex = genTex(1024, 720, true, [1, 1], (x, y) => {
@@ -436,7 +459,7 @@ const std = (o) => new THREE.MeshStandardMaterial(o);
 const fabric = (color, extra = {}) => new THREE.MeshPhysicalMaterial({ color, roughness: 0.92, sheen: 1, sheenRoughness: 0.6, sheenColor: 0xffffff, bumpMap: weave, bumpScale: 0.8, ...extra });
 const MAT = {
   floor: std({ map: floorTex.map, roughnessMap: floorTex.rough, bumpMap: floorTex.bump, bumpScale: 1, roughness: 1, metalness: 0 }),
-  plaster: std({ color: 0xe8e3db, roughness: 0.92, bumpMap: plasterBump, bumpScale: 0.6 }),
+  plaster: std({ color: 0xf0ebe3, roughness: 0.88, bumpMap: plasterBump, bumpScale: 0.06 }),        // smooth warm-white paint
   ceiling: std({ color: 0xf2f0ec, roughness: 0.95 }),
   trim: std({ color: 0xf5f3ef, roughness: 0.45 }),
   frame: std({ color: 0x1b1d21, roughness: 0.35, metalness: 0.8 }),
@@ -463,10 +486,15 @@ const MAT = {
   flame: new THREE.MeshBasicMaterial({ map: makeFlameTexture(), color: new THREE.Color(3.2, 1.5, 0.6), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }),
   downlight: std({ color: 0xffffff, emissive: 0xffe2c0, emissiveIntensity: 0.3 }),
   bookMat: std({ vertexColors: true, roughness: 0.7 }),
-  tile: std({ map: tileTex, roughness: 0.35 }),
+  tile: std({ map: tileTex, roughness: 0.18 }),
+  marble: std({ map: marbleTex, roughness: 0.16 }),
+  travertine: std({ map: travertineTex, roughness: 0.7, bumpMap: plasterBump, bumpScale: 0.5 }),
+  woodClad: std({ map: woodCladTex, roughness: 0.62 }),
+  basalt: std({ color: 0x2c2c2f, roughness: 0.55, bumpMap: plasterBump, bumpScale: 0.8 }),
+  cove: std({ color: 0xffffff, emissive: 0xffd9a8, emissiveIntensity: 0.2 }),
   porcelain: new THREE.MeshPhysicalMaterial({ color: 0xf7f7f5, roughness: 0.12, clearcoat: 1, clearcoatRoughness: 0.05 }),
   stainless: std({ color: 0xc9ccd0, roughness: 0.28, metalness: 1 }),
-  countertop: std({ color: 0xe9e6e1, roughness: 0.18, bumpMap: plasterBump, bumpScale: 0.2 }),
+  countertop: std({ map: marbleTex, roughness: 0.14 }),
   cabinet: std({ color: 0x2e3a33, roughness: 0.45 }),
   mirror: std({ color: 0xffffff, roughness: 0.02, metalness: 1 }),
   water: new THREE.MeshPhysicalMaterial({ color: 0x9fc6d6, roughness: 0.03, transmission: 0, transparent: true, opacity: 0.75 }),
@@ -487,8 +515,17 @@ function cyl(rt, rb, h, mat, x = 0, y = 0, z = 0, seg = 24, open = false) {
   const m = new THREE.Mesh(new THREE.CylinderGeometry(rt, rb, h, seg, 1, open), mat);
   m.position.set(x, y, z); m.castShadow = true; m.receiveShadow = true; return m;
 }
+function meterUV(geo, w, h, d) {          // scale each face's UVs to its size in metres (no stretched textures)
+  const uv = geo.attributes.uv, n = geo.attributes.normal;
+  for (let i = 0; i < uv.count; i++) {
+    const nx = Math.abs(n.getX(i)), ny = Math.abs(n.getY(i));
+    const su = nx > 0.5 ? d : w, sv = ny > 0.5 ? d : h;
+    uv.setXY(i, uv.getX(i) * su, uv.getY(i) * sv);
+  }
+  return geo;
+}
 function box(w, h, d, mat, x, y, z) {
-  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+  const m = new THREE.Mesh(meterUV(new THREE.BoxGeometry(w, h, d), w, h, d), mat);
   m.position.set(x, y, z); m.castShadow = true; m.receiveShadow = true; return m;
 }
 
@@ -530,7 +567,7 @@ function addCollider(m, level = 0, kind = 'wall') {
 }
 // A straight wall with rectangular openings. axis 'x': runs along x at z = c.  axis 'z': runs along z at x = c.
 // base = floor height the wall stands on, height = wall height, level = which floor its collider belongs to
-function buildWall(axis, c, from, to, openings = [], thick = T, collide = false, base = 0, height = H, level = 0) {
+function buildWall(axis, c, from, to, openings = [], thick = T, collide = false, base = 0, height = H, level = 0, clad = null) {
   let cur = from;
   const add = (a, b, y0, y1) => {
     if (b - a < 0.001 || y1 - y0 < 0.001) return;
@@ -538,6 +575,10 @@ function buildWall(axis, c, from, to, openings = [], thick = T, collide = false,
     const m = axis === 'x' ? box(len, h, thick, MAT.plaster, mid, cy, c) : box(thick, h, len, MAT.plaster, c, cy, mid);
     scene.add(m);
     if (collide && y0 < 1.8) addCollider(m, level);
+    if (clad) {                                        // outside face cladding (stone / wood), 3 cm proud of the wall
+      const off = c + clad.side * (thick / 2 + 0.015);
+      scene.add(axis === 'x' ? box(len, h, 0.03, clad.mat, mid, cy, off) : box(0.03, h, len, clad.mat, off, cy, mid));
+    }
   };
   for (const o of [...openings].sort((p, q) => p.a - q.a)) { add(cur, o.a, 0, height); add(o.a, o.b, 0, o.y0); add(o.a, o.b, o.y1, height); cur = o.b; }
   add(cur, to, 0, height);
@@ -652,12 +693,13 @@ function buildUpperFloor() {
   terrace.position.y = top; terrace.receiveShadow = true; scene.add(terrace);
 
   // Upstairs walls (base = L1, height = H2, colliders on level 1)
-  const U = (axis, c, from, to, openings = [], thick = T) => buildWall(axis, c, from, to, openings, thick, true, L1, H2, 1);
-  U('x', D / 2 + T / 2, -W / 2 - T, W / 2 + T, UPPER_WINDOWS.map(w => ({ a: w.a, b: w.b, y0: w.sill, y1: w.head })));
-  U('z', -W / 2 - T / 2, 1 - 0.06, D / 2 + T, [{ a: 2.6, b: 4.4, y0: 0.6, y1: 2.5 }]);
-  U('z', W / 2 + T / 2, 1 - 0.06, D / 2 + T);
+  const U = (axis, c, from, to, openings = [], thick = T, clad = null) => buildWall(axis, c, from, to, openings, thick, true, L1, H2, 1, clad);
+  const WOOD = (side) => ({ mat: MAT.woodClad, side });
+  U('x', D / 2 + T / 2, -W / 2 - T, W / 2 + T, UPPER_WINDOWS.map(w => ({ a: w.a, b: w.b, y0: w.sill, y1: w.head })), T, WOOD(1));
+  U('z', -W / 2 - T / 2, 1 - 0.06, D / 2 + T, [{ a: 2.6, b: 4.4, y0: 0.6, y1: 2.5 }], T, WOOD(-1));
+  U('z', W / 2 + T / 2, 1 - 0.06, D / 2 + T, [], T, WOOD(1));
   const slide = [{ a: -5.2, b: -2.6, y0: 0, y1: 2.35 }, { a: 4.2, b: 6.8, y0: 0, y1: 2.35 }];     // sliding glass doors to the terrace
-  U('x', 1, -W / 2 - T, W / 2 + T, slide, 0.12);
+  U('x', 1, -W / 2 - T, W / 2 + T, slide, 0.12, WOOD(-1));
   U('z', -0.5, 1.06, D / 2, [{ a: 4.6, b: 5.6, y0: 0, y1: DOOR_H }], 0.12);                      // suite | lounge partition
   // Roof over the upstairs rooms
   scene.add(box(W + 2 * T, 0.2, D / 2 - 1 + T + 0.06, MAT.ceiling, 0, L1 + H2 + 0.1, (1 - 0.06 + D / 2 + T) / 2));
@@ -704,6 +746,42 @@ function buildUpperFloor() {
   glassRail(-W / 2 - T, W / 2 + T, -D / 2 - T, -D / 2 - T + 0.04);
   glassRail(-W / 2 - T, -W / 2 - T + 0.04, -D / 2 - T, 1);
   glassRail(W / 2 + T - 0.04, W / 2 + T, -D / 2 - T, 1);
+
+  // ---- luxury details --------------------------------------------------------------
+  const ex = W / 2 + T + 0.03, ez = D / 2 + T + 0.03;
+  // Black basalt plinth around the ground floor (gap at the front door)
+  const pl = 0.42, pt = 0.05;
+  scene.add(box(2 * ex + pt * 2, pl, pt, MAT.basalt, 0, pl / 2, ez + pt / 2));
+  scene.add(box(pt, pl, 2 * ez, MAT.basalt, -ex - pt / 2, pl / 2, 0), box(pt, pl, 2 * ez, MAT.basalt, ex + pt / 2, pl / 2, 0));
+  scene.add(box(ex + 0.1 + pt, pl, pt, MAT.basalt, (-ex - pt + 0.1) / 2, pl / 2, -ez - pt / 2), box(ex - 1.4 + pt, pl, pt, MAT.basalt, (1.4 + ex + pt) / 2, pl / 2, -ez - pt / 2));
+  // Dark metal fascia around both roof edges
+  const fascia = (y0, h, z0, z1) => {
+    const w = 2 * ex + 0.08;
+    scene.add(box(w, h, 0.04, MAT.frame, 0, y0 + h / 2, z0 - 0.02), box(w, h, 0.04, MAT.frame, 0, y0 + h / 2, z1 + 0.02));
+    scene.add(box(0.04, h, z1 - z0, MAT.frame, -ex - 0.04, y0 + h / 2, (z0 + z1) / 2), box(0.04, h, z1 - z0, MAT.frame, ex + 0.04, y0 + h / 2, (z0 + z1) / 2));
+  };
+  fascia(H - 0.02, 0.26, -ez, ez);
+  fascia(L1 + H2 - 0.02, 0.3, 1 - 0.1, ez);
+  // Warm LED cove strips along the ceilings (glow at night, cheap: emissive only)
+  const cove = (x0, x1, y, z) => scene.add(box(x1 - x0, 0.03, 0.03, MAT.cove, (x0 + x1) / 2, y, z));
+  const coveX = (z0, z1, y, x) => scene.add(box(0.03, 0.03, z1 - z0, MAT.cove, x, y, (z0 + z1) / 2));
+  cove(-W / 2 + 0.15, W / 2 - 0.15, H - 0.12, -D / 2 + 0.12);
+  coveX(-D / 2 + 0.15, 0.85, H - 0.12, -W / 2 + 0.12); coveX(-D / 2 + 0.15, 0.85, H - 0.12, W / 2 - 0.12);
+  cove(-W / 2 + 0.15, W / 2 - 0.15, L1 + H2 - 0.12, D / 2 - 0.12);
+  cove(-W / 2 + 0.15, W / 2 - 0.15, L1 + H2 - 0.12, 1.12);
+  // Marble feature wall behind the fireplace + marble bathroom walls
+  scene.add(box(0.02, H - 0.1, 2.6, MAT.marble, -W / 2 + 0.011, (H - 0.1) / 2, -4.2));
+  const bx0 = 3.56, bx1 = W / 2, bz0 = 1.06, bz1 = D / 2;
+  scene.add(box(bx1 - bx0, 1.35, 0.02, MAT.marble, (bx0 + bx1) / 2, 0.675, bz1 - 0.011));
+  scene.add(box(0.02, 2.4, bz1 - bz0, MAT.marble, bx1 - 0.011, 1.2, (bz0 + bz1) / 2));
+  scene.add(box(0.02, 2.4, bz1 - bz0, MAT.marble, bx0 + 0.011, 1.2, (bz0 + bz1) / 2));
+  // Front door: tall walnut pivot door standing open + a cantilevered entrance canopy with downlights
+  const door = rbox(1.22, 2.22, 0.06, MAT.walnut, 0, 0, 0, 0.01);
+  const doorPivot = new THREE.Group(); doorPivot.position.set(0.12, 1.11, -D / 2 - T / 2); doorPivot.rotation.y = -1.35; scene.add(doorPivot);
+  door.position.set(0.61, 0, 0); doorPivot.add(door);
+  const pull = cyl(0.015, 0.015, 1.2, MAT.brass, 1.08, 0, 0.06, 10); doorPivot.add(pull);
+  scene.add(box(3.4, 0.14, 1.7, MAT.frame, 0.75, 2.62, -D / 2 - T - 0.85));
+  for (const x of [-0.2, 1.7]) { const d = new THREE.Mesh(new THREE.CircleGeometry(0.05, 16), MAT.downlight); d.rotation.x = Math.PI / 2; d.position.set(x, 2.548, -D / 2 - T - 0.85); scene.add(d); }
 }
 
 function buildRoom() {
@@ -722,11 +800,12 @@ function buildRoom() {
   slab(STAIRS.x0, STAIRS.x1, sz0, STAIRS.z0); slab(STAIRS.x0, STAIRS.x1, STAIRS.z1, sz1);
   const winOpenings = (side) => WINDOW_DEFS.filter(w => w.side === side).map(w => ({ a: w.a, b: w.b, y0: w.sill, y1: w.head }));
   const FRONT_DOOR = { a: 0.1, b: 1.4, y0: 0, y1: 2.25 };          // front door → garden
-  buildWall('x', -D / 2 - T / 2, -W / 2 - T, W / 2 + T, [...winOpenings('N'), FRONT_DOOR], T, true);
+  const STONE_N = { mat: MAT.travertine, side: -1 }, STONE_S = { mat: MAT.travertine, side: 1 };
+  buildWall('x', -D / 2 - T / 2, -W / 2 - T, W / 2 + T, [...winOpenings('N'), FRONT_DOOR], T, true, 0, H, 0, STONE_N);
   doorCasing('x', -D / 2 - T / 2, FRONT_DOOR.a, FRONT_DOOR.b, T);
-  buildWall('x', D / 2 + T / 2, -W / 2 - T, W / 2 + T, winOpenings('S'), T, true);
-  buildWall('z', -W / 2 - T / 2, -D / 2, D / 2, [], T, true);
-  buildWall('z', W / 2 + T / 2, -D / 2, D / 2, [], T, true);
+  buildWall('x', D / 2 + T / 2, -W / 2 - T, W / 2 + T, winOpenings('S'), T, true, 0, H, 0, STONE_S);
+  buildWall('z', -W / 2 - T / 2, -D / 2 - T, D / 2 + T, [], T, true, 0, H, 0, { mat: MAT.travertine, side: -1 });
+  buildWall('z', W / 2 + T / 2, -D / 2 - T, D / 2 + T, [], T, true, 0, H, 0, { mat: MAT.travertine, side: 1 });
 
   // Interior walls (12 cm) with doorways
   const IT = 0.12, door = (a, b) => ({ a, b, y0: 0, y1: DOOR_H });
@@ -829,9 +908,43 @@ function buildRoom() {
   }
 }
 const buildingMats = [];
+const STATIC_START = scene.children.length;
 buildRoom();
 buildGarden();
 buildUpperFloor();
+mergeStatic(STATIC_START);
+
+// Combine meshes that share a material into one mesh each. The house is built from ~1000 boxes; the GPU
+// is much happier drawing ~40 big meshes than 1000 small ones.
+function mergeMeshes(list, parent, useWorld) {
+  const buckets = new Map();
+  for (const m of list) {
+    if (Array.isArray(m.material) || m.geometry.morphAttributes.position) continue;
+    const key = `${m.material.uuid}|${m.castShadow}|${m.receiveShadow}|${!!m.userData.noCollide}|${!!m.geometry.index}`;
+    if (!buckets.has(key)) buckets.set(key, []);
+    buckets.get(key).push(m);
+  }
+  for (const group of buckets.values()) {
+    if (group.length < 2) continue;
+    const geos = group.map(m => {
+      if (useWorld) m.updateMatrixWorld(true); else m.updateMatrix();
+      const g = m.geometry.clone().applyMatrix4(useWorld ? m.matrixWorld : m.matrix);
+      for (const k of Object.keys(g.attributes)) if (!['position', 'normal', 'uv'].includes(k)) g.deleteAttribute(k);
+      return g;
+    });
+    const merged = mergeGeometries(geos);
+    geos.forEach(g => g.dispose());
+    if (!merged) continue;
+    const mm = new THREE.Mesh(merged, group[0].material);
+    mm.castShadow = group[0].castShadow; mm.receiveShadow = group[0].receiveShadow; mm.userData.noCollide = group[0].userData.noCollide;
+    group.forEach(m => { parent.remove(m); m.geometry.dispose(); });
+    parent.add(mm);
+  }
+}
+function mergeStatic(from) {
+  const list = scene.children.slice(from).filter(o => o.isMesh && !o.isInstancedMesh && !o.material.transparent && o.geometry && o.parent === scene && o !== garden.water);
+  mergeMeshes(list, scene, true);
+}
 
 // ================================================================ lighting
 const sky = new Sky(); sky.scale.setScalar(1500); scene.add(sky);
@@ -849,22 +962,32 @@ const hemiLight = new THREE.HemisphereLight(0xdfe8ff, 0x8a7560, 0.35);
 scene.add(hemiLight);
 
 // Recessed ceiling downlights for the evening
-const downlights = [];
-for (const [x, z, lv] of [[-5.5, -3.5], [-1.5, -3.5], [-4.5, -0.6], [5, -3.5], [5, -1], [-5, 3.5], [0.75, 3.5], [5.75, 3.5], [-4.2, 3.5, 1], [5.6, 3.5, 1]]) {
-  const ceil = lv ? L1 + H2 : H;
-  const s = new THREE.SpotLight(0xffd6aa, 0, 0, 0.8, 0.85, 2);
-  s.position.set(x, ceil - 0.05, z); s.target.position.set(x, lv ? L1 : 0, z);
-  scene.add(s, s.target); downlights.push(s);
+// Ceiling downlights. Every fitting glows (emissive disc), but only the 4 fittings nearest the player have a
+// real SpotLight: a fixed number of lights keeps shaders fast and avoids recompiles, and you only see nearby rooms anyway.
+const DOWN_POS = [[-5.5, -3.5], [-1.5, -3.5], [-4.5, -0.6], [5, -3.5], [5, -1], [-5, 3.5], [0.75, 3.5], [5.75, 3.5], [-4.2, 3.5, 1], [5.6, 3.5, 1]]
+  .map(([x, z, lv]) => ({ x, z, lv: lv || 0, ceil: lv ? L1 + H2 : H }));
+for (const d of DOWN_POS) {
   const disc = new THREE.Mesh(new THREE.CircleGeometry(0.065, 24), MAT.downlight);
-  disc.rotation.x = Math.PI / 2; disc.position.set(x, ceil - 0.001, z); scene.add(disc);
+  disc.rotation.x = Math.PI / 2; disc.position.set(d.x, d.ceil - 0.001, d.z); scene.add(disc);
+}
+const downlights = [0, 1, 2, 3].map(() => {
+  const s = new THREE.SpotLight(0xffd6aa, 0, 0, 0.8, 0.85, 2);
+  scene.add(s, s.target); return s;
+});
+let downlightT = 0;
+function assignDownlights(dt) {
+  downlightT -= dt; if (downlightT > 0) return; downlightT = 0.4;
+  const px = camera.position.x, pz = camera.position.z, lv = typeof me !== 'undefined' ? me.level : 0;
+  const near = DOWN_POS.map(d => ({ d, k: Math.hypot(d.x - px, d.z - pz) + (d.lv !== lv ? 12 : 0) })).sort((a, b) => a.k - b.k);
+  downlights.forEach((s, i) => { const d = near[i].d; s.position.set(d.x, d.ceil - 0.05, d.z); s.target.position.set(d.x, d.lv ? L1 : 0, d.z); });
 }
 // ---- Light pool: a fixed set of point lights created once.
 // three.js recompiles every shader when the NUMBER of lights changes (that was the stutter when
 // placing a lamp), so furniture borrows a light from this pool instead of creating one.
 const LIGHT_POOL = [];
-for (let i = 0; i < 8; i++) {
+for (let i = 0; i < 5; i++) {
   const l = new THREE.PointLight(0xffffff, 0, 0, 2);
-  if (i < 2) {                                   // only 2 may cast shadows (each costs 6 renders)
+  if (i < 1) {                                   // only 1 may cast shadows (each costs 6 renders + shader work)
     l.castShadow = true; l.shadow.mapSize.set(512, 512); l.shadow.bias = -0.002;
     l.shadow.camera.near = 0.05; l.shadow.autoUpdate = false;
   }
@@ -880,7 +1003,7 @@ function releaseLight(l) { l.intensity = 0; l.position.set(0, -20, 0); l.userDat
 
 // ---- Soft daylight through the windows (rectangular area lights = big soft light sources)
 RectAreaLightUniformsLib.init();
-const windowLights = WINDOW_DEFS.map((win) => {
+const windowLights = WINDOW_DEFS.filter(w => w.side === 'N' && w.sill < 0.5).map((win) => {
   const w = win.b - win.a, h = win.head - win.sill, cx = (win.a + win.b) / 2, cy = (win.sill + win.head) / 2;
   const ra = new THREE.RectAreaLight(0xdfe9ff, 0, w, h);
   const z = win.side === 'N' ? -D / 2 + 0.03 : D / 2 - 0.03;
@@ -902,7 +1025,7 @@ function flushShadows() {
 
 // ---- Reflection probe: a 360° snapshot of THIS room used for reflections + ambient light,
 // so the floor/glass reflect your real windows and furniture (not a generic studio).
-const cubeRT = new THREE.WebGLCubeRenderTarget(256, { type: THREE.HalfFloatType });
+const cubeRT = new THREE.WebGLCubeRenderTarget(128, { type: THREE.HalfFloatType });
 const cubeCam = new THREE.CubeCamera(0.05, 1000, cubeRT);
 cubeCam.position.set(-3.5, 1.4, -2.5); scene.add(cubeCam);
 let probeEnv = null;
@@ -1093,8 +1216,7 @@ function buildFurniture(id) {
       g.add(cyl(0.03, 0.03, 0.9, MAT.blackMetal, 0, 0.48, 0, 10));
       const globe = new THREE.Mesh(new THREE.SphereGeometry(0.13, 20, 14), std({ color: 0xfff4e0, emissive: 0xffd9a0, emissiveIntensity: 2.2, roughness: 0.4 }));
       globe.position.y = 1.05; g.add(globe);
-      const anchor = new THREE.Object3D(); anchor.position.set(0, 1.05, 0); g.add(anchor);
-      g.userData.lightSpec = { anchor, color: 0xffcf8a, intensity: 2.2, shadow: false, quiet: true };
+      globe.userData.lampGlobe = true;                  // glows (emissive + bloom); no real light → keeps the game fast
       break;
     }
     case 'kitchen': {   // 3 m counter run: base cabinets, stone top, sink, cooktop, wall cabinets
@@ -1109,7 +1231,7 @@ function buildFurniture(id) {
       g.add(rbox(0.6, 0.012, 0.52, MAT.glassBlack, 0.75, 0.926, 0.02, 0.004, 1));              // cooktop
       g.add(rbox(3.0, 0.7, 0.34, MAT.cabinet, 0, 1.85, -0.13, 0.006));                          // wall cabinets
       for (let i = 0; i < 5; i++) g.add(rbox(0.012, 0.66, 0.01, MAT.soot, -1.2 + i * 0.6, 1.85, 0.042, 0.002, 1));
-      g.add(rbox(3.0, 0.5, 0.01, MAT.ceramic, 0, 1.17, -0.3, 0.002, 1));                        // backsplash
+      g.add(rbox(3.0, 0.5, 0.01, MAT.marble, 0, 1.17, -0.3, 0.002, 1));                         // marble backsplash
       break;
     }
     case 'fridge': {
@@ -1281,6 +1403,9 @@ function buildFurniture(id) {
       break;
     }
   }
+  // Merge the item's parts that share a material (flames stay separate: they animate)
+  const flames = g.userData.flames || [];
+  mergeMeshes(g.children.filter(c => c.isMesh && !c.isInstancedMesh && !flames.includes(c) && !c.userData.sharedGeo && !c.geometry.attributes.color), g, false);
   return g;
 }
 
@@ -1541,9 +1666,9 @@ function stageRoom() {
   userPlace('armchair', 1.2, 2.6, E, NOREC);
   userPlace('plant', 3.1, 5.5, 0.4, NOREC);
   // Bathroom
-  userPlace('bathtub', 6.0, 5.6, 0, NOREC);
+  userPlace('bathtub', 6.0, 5.57, 0, NOREC);
   userPlace('toilet', 7.6, 3.4, E, NOREC);
-  userPlace('vanity', 3.82, 3.0, Wt, NOREC);
+  userPlace('vanity', 3.86, 3.0, Wt, NOREC);
   userPlace('plant', 3.9, 5.6, 2.2, NOREC);
   // Garden
   for (const [x, z] of [[-17, -17], [-18, -4], [-17, 9], [-6, 17], [7, 18], [17, 7], [18, -6], [17.5, -18.5], [-9, -18]]) userPlace('tree', x, z, Math.random() * 6, NOREC);
@@ -1766,6 +1891,7 @@ function applyLighting() {
   windowLights.forEach(l => { l.intensity = 5 * l.userData.k * dayK * (1 - 0.55 * rainMix); l.color.setHex(0xdfe9ff).lerp(GREY_SKY, rainMix); });
   const lightsOn = Math.max(1 - dayK, rainMix * 0.5);
   downlights.forEach(s => s.intensity = 11 * lightsOn);
+  MAT.cove.emissiveIntensity = 0.15 + 3.2 * lightsOn;
   MAT.downlight.emissiveIntensity = 0.3 + 10 * lightsOn;
   buildingMats.forEach(m => m.emissiveIntensity = 1.4 * (1 - dayK));
   dustMat.opacity = 0.2 * dayK * (1 - rainMix);
@@ -1848,7 +1974,7 @@ const QUALITY = [
   { name: 'Medium', pr: Math.min(devicePixelRatio, 1),   ao: false, bloom: true,  shadow: 2048 },
   { name: 'Low',    pr: 0.75,                            ao: false, bloom: false, shadow: 1024 },
 ];
-let qIndex = 0;
+let qIndex = 1;
 const fpsLabel = document.getElementById('fps');
 function applyQuality(i) {
   qIndex = i; const q = QUALITY[i];
@@ -2028,7 +2154,7 @@ startBtn.addEventListener('click', async () => {
   myName = name.slice(0, 24);
   connectNet();
   updateModeUI();
-  if (isTouch) { applyQuality(1); flashHint('Left stick to walk • Swipe to look • Aim the dot and tap Place', 4500); }
+  if (isTouch) { flashHint('Left stick to walk • Swipe to look • Aim the dot and tap Place', 4500); }
   else flashHint('Two-finger swipe to look • Tap to place • Pinch to zoom', 4000);
 });
 
@@ -2261,10 +2387,11 @@ const discoBall = new THREE.Group();
   discoBall.add(ball, cyl(0.004, 0.004, 0.5, MAT.blackMetal, 0, 0.36, 0, 4));
   discoBall.position.copy(PARTY_POS); discoBall.visible = false; scene.add(discoBall);
 }
-const partySpots = [0, 1, 2].map(i => {
-  const s = new THREE.SpotLight(0xff00ff, 0, 0, 0.32, 0.5, 2);
-  s.position.copy(PARTY_POS); scene.add(s, s.target); return s;
-});
+const partySpots = [];
+function ensurePartySpots() {          // created on first use (one short shader rebuild) instead of costing every frame forever
+  if (partySpots.length) return;
+  for (let i = 0; i < 2; i++) { const sp = new THREE.SpotLight(0xff00ff, 0, 0, 0.32, 0.5, 2); sp.position.copy(PARTY_POS); scene.add(sp, sp.target); partySpots.push(sp); }
+}
 function setupPartyMusic() {
   if (partyMusic || typeof Tone === 'undefined') return;
   try {
@@ -2299,11 +2426,12 @@ function toggleParty() { partyOn = partyOn ? 0 : 1; if (partyOn) achieve('party'
 function updateParty(dt, t) {
   partyMix += (partyOn - partyMix) * (1 - Math.exp(-3 * dt));
   const on = partyMix > 0.01;
+  if (on) ensurePartySpots();
   discoBall.visible = on;
   if (on) discoBall.rotation.y += dt * 1.2;
   partySpots.forEach((s, i) => {
     s.intensity = 30 * partyMix;
-    s.color.setHSL((t * 0.15 + i / 3) % 1, 1, 0.55);
+    s.color.setHSL((t * 0.15 + i / 2) % 1, 1, 0.55);
     const a = t * (0.7 + i * 0.25) + i * 2.1;
     s.target.position.set(PARTY_POS.x + Math.cos(a) * 3, 0, PARTY_POS.z + Math.sin(a * 1.3) * 2.5);
   });
@@ -2552,6 +2680,33 @@ function makeNameTag(name, color) {
   return sp;
 }
 
+// Face texture painted on a canvas. A sphere's UVs wrap 360° around: the front of the head (−Z) is at u = 0.75.
+const faceTexCache = {};
+function faceTexture(girl) {
+  const key = girl ? 'girl' : 'boy';
+  if (faceTexCache[key]) return faceTexCache[key];
+  const c = document.createElement('canvas'); c.width = 1024; c.height = 512; const x = c.getContext('2d');
+  x.fillStyle = '#c98d66'; x.fillRect(0, 0, 1024, 512);
+  const cx = 768, cy = 270;                                      // face centre (u = 0.75, just below the equator)
+  const blush = (bx) => { const gr = x.createRadialGradient(bx, cy + 44, 2, bx, cy + 44, 34); gr.addColorStop(0, 'rgba(226,110,100,0.38)'); gr.addColorStop(1, 'rgba(226,110,100,0)'); x.fillStyle = gr; x.fillRect(bx - 40, cy + 4, 80, 80); };
+  blush(cx - 70); blush(cx + 70);
+  for (const s of [-1, 1]) {
+    const ex = cx + s * 44, ey = cy - 12;
+    x.fillStyle = '#fbf8f4'; x.beginPath(); x.ellipse(ex, ey, 19, girl ? 16 : 14, 0, 0, Math.PI * 2); x.fill();     // eye white
+    x.fillStyle = girl ? '#4a2f20' : '#3a2617'; x.beginPath(); x.arc(ex + 1, ey + 1, 11, 0, Math.PI * 2); x.fill();  // iris
+    x.fillStyle = '#0d0907'; x.beginPath(); x.arc(ex + 1, ey + 1, 5.5, 0, Math.PI * 2); x.fill();                     // pupil
+    x.fillStyle = '#ffffff'; x.beginPath(); x.arc(ex - 3, ey - 4, 3.6, 0, Math.PI * 2); x.fill();                     // highlight
+    x.strokeStyle = '#3b2418'; x.lineWidth = girl ? 3.5 : 3; x.beginPath(); x.ellipse(ex, ey, 19, girl ? 16 : 14, 0, Math.PI * 1.08, Math.PI * 1.92); x.stroke();   // upper lid
+    if (girl) for (let k = 0; k < 3; k++) { const a = Math.PI * (1.15 + k * 0.08) * (s > 0 ? 1 : 1); x.beginPath(); const lx = ex + s * (12 + k * 4), ly = ey - 12 + k * 2; x.moveTo(lx, ly); x.lineTo(lx + s * 6, ly - 6); x.stroke(); }   // lashes
+    x.strokeStyle = '#2a1a12'; x.lineWidth = girl ? 5 : 7; x.lineCap = 'round';                                          // eyebrow
+    x.beginPath(); x.moveTo(ex - s * 16, ey - 30); x.quadraticCurveTo(ex, ey - (girl ? 40 : 37), ex + s * 18, ey - 31); x.stroke();
+  }
+  x.strokeStyle = 'rgba(120,70,48,0.55)'; x.lineWidth = 3.5; x.beginPath(); x.arc(cx, cy + 22, 9, Math.PI * 0.15, Math.PI * 0.85); x.stroke();   // nose shading
+  x.strokeStyle = girl ? '#b44d55' : '#8c4a3c'; x.lineWidth = girl ? 6 : 5; x.lineCap = 'round';                               // smile
+  x.beginPath(); x.arc(cx, cy + 40, 20, Math.PI * 0.2, Math.PI * 0.8); x.stroke();
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8;
+  faceTexCache[key] = t; return t;
+}
 // Procedural boy / girl characters. Built from simple parts so arms, legs and head can animate.
 // Everything faces −Z (the direction the camera looks at yaw 0).
 const SKIN = 0xc98d66, HAIR = 0x1c130e;
@@ -2590,10 +2745,12 @@ function makeCharacter(kind, outfit) {
   }
   // Head (pivot at the neck so it can nod with where the player looks)
   const head = new THREE.Group(); head.position.set(0, 1.6, 0); body.add(head);
-  const face = mesh(new THREE.SphereGeometry(0.12, 32, 24), skin, 0, 0.1, 0); face.scale.set(1, 1.12, 1.02); head.add(face);
-  const eyeMat = M(0x111111, 0.2);
-  for (const ex of [-0.042, 0.042]) head.add(mesh(new THREE.SphereGeometry(0.014, 12, 8), eyeMat, ex, 0.115, -0.112));
-  head.add(mesh(new THREE.SphereGeometry(0.018, 12, 8), skin, 0, 0.085, -0.122));            // nose
+  // Painted face (eyes with highlights, brows, smile, cheeks) wrapped onto the head instead of dummy sphere eyes
+  const faceMat = new THREE.MeshPhysicalMaterial({ map: faceTexture(girl), roughness: 0.5, sheen: 0.3 });
+  const face = mesh(new THREE.SphereGeometry(0.125, 40, 28), faceMat, 0, 0.1, 0); face.scale.set(1, 1.1, 1.02); head.add(face);
+  for (const s of [-1, 1]) {                                      // small ears
+    const ear = mesh(new THREE.SphereGeometry(0.03, 12, 10), skin, s * 0.122, 0.095, 0.005); ear.scale.set(0.5, 1, 0.8); head.add(ear);
+  }
   // Hair cap: a partial sphere tilted back so the forehead and eyes stay visible
   const cap = mesh(new THREE.SphereGeometry(girl ? 0.134 : 0.13, 32, 16, 0, Math.PI * 2, 0, Math.PI * (girl ? 0.56 : 0.5)), hair, 0, girl ? 0.115 : 0.12, 0.008);
   cap.rotation.x = girl ? 0.45 : 0.5; head.add(cap);
@@ -2748,6 +2905,7 @@ buildInventoryUI();
 rebuildGhost();
 initPet();
 setupFunUI();
+applyQuality(1);              // Medium by default (Q for High); auto-drops to Low if FPS stays under 40
 
 // ================================================================ loop
 const clock = new THREE.Clock();
@@ -2768,6 +2926,7 @@ renderer.setAnimationLoop(() => {
   updateFlicker(t);
   updateAvatars(dt);
   updateCarry(dt);
+  assignDownlights(dt);
   updateParty(dt, t);
   updatePet(dt, t);
   updateHideSeek();
@@ -2785,7 +2944,7 @@ renderer.setAnimationLoop(() => {
   lensPass.uniforms.uTime.value = t;
 
   // Shadows + reflection snapshot only when needed (the sun moves during day/night transitions)
-  if (transitioning) { shadowsDirty = true; if (probeTimer <= 0) probeTimer = 0.4; }
+  if (transitioning) { shadowsDirty = true; probeTimer = Math.max(probeTimer, 0.6); }   // re-capture reflections once things settle
   flushShadows();
   if (probeTimer > 0) { probeTimer -= dt; if (probeTimer <= 0) { captureProbe(); if (probeCaptures < 2) probeTimer = 0.3; } }
 
