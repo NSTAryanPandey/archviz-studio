@@ -1,0 +1,9 @@
+# Render.com blueprint: free web service running the multiplayer server
+services:
+  - type: web
+    name: archviz-studio
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
