@@ -29,7 +29,7 @@ function lanUrls() {
   return urls;
 }
 app.get('/api/lan', (_req, res) => res.json({ urls: lanUrls() }));
-app.get('/health', (_req, res) => res.json({ ok: true, rooms: rooms.size }));
+app.get('/health', (_req, res) => res.json({ ok: true, rooms: rooms.size, storage: mongoRooms ? 'mongodb' : 'file' }));
 
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: '*' } });
@@ -38,22 +38,66 @@ const io = new Server(server, { cors: { origin: '*' } });
 /** rooms: name → { objects: [{id,type,x,z,rot,aabb,walkable,by}], env: {night,rain}, players: Map<socketId, player> } */
 const rooms = new Map();
 
-function loadRooms() {
+// Storage: MongoDB when MONGODB_URI is set (online on Render), otherwise data/rooms.json (on your laptop).
+const MONGODB_URI = process.env.MONGODB_URI || '';
+let mongoRooms = null;                     // the MongoDB "rooms" collection, once connected
+const cleanForSave = (r) => ({ objects: r.objects.map(({ lockedBy, lockName, ...o }) => o), env: r.env });
+
+async function loadRooms() {
+  if (MONGODB_URI) {
+    try {
+      const { MongoClient } = require('mongodb');
+      const client = new MongoClient(MONGODB_URI, { serverSelectionTimeoutMS: 10000 });
+      await client.connect();
+      mongoRooms = client.db(process.env.MONGODB_DB || 'archviz').collection('rooms');
+      for (const doc of await mongoRooms.find({}).toArray()) {
+        rooms.set(doc._id, { objects: doc.objects || [], env: doc.env || { night: 0, rain: 0 }, players: new Map() });
+      }
+      console.log(`MongoDB connected: loaded ${rooms.size} saved room(s)`);
+      return;
+    } catch (err) {
+      console.error('⚠️  MongoDB connection failed, falling back to data/rooms.json:', err.message);
+      mongoRooms = null;
+    }
+  }
   try {
     const saved = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
     for (const [name, r] of Object.entries(saved)) rooms.set(name, { objects: r.objects || [], env: r.env || { night: 0, rain: 0 }, players: new Map() });
-    console.log(`Loaded ${rooms.size} saved room(s)`);
+    console.log(`Loaded ${rooms.size} saved room(s) from data/rooms.json`);
   } catch { /* first run: no file yet */ }
 }
+
+// Debounced saving: changes within 1 s are batched into one write. Only changed rooms are written to MongoDB.
+const dirtyRooms = new Set();
 let saveTimer = null;
-function saveSoon() {                      // debounce writes: at most once per second
+function saveSoon(room) {
+  for (const [name, r] of rooms) if (r === room) dirtyRooms.add(name);
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => {
-    const out = {};
-    for (const [name, r] of rooms) out[name] = { objects: r.objects.map(({ lockedBy, lockName, ...o }) => o), env: r.env };
-    fs.mkdirSync(path.dirname(DATA_FILE), { recursive: true });
-    fs.writeFile(DATA_FILE, JSON.stringify(out), (err) => err && console.error('Save failed:', err.message));
-  }, 1000);
+  saveTimer = setTimeout(flushSaves, 1000);
+}
+async function flushSaves() {
+  clearTimeout(saveTimer); saveTimer = null;
+  const names = [...dirtyRooms]; dirtyRooms.clear();
+  if (mongoRooms) {
+    await Promise.all(names.map(name => {
+      const r = rooms.get(name); if (!r) return null;
+      return mongoRooms.updateOne({ _id: name }, { $set: { ...cleanForSave(r), updatedAt: new Date() } }, { upsert: true })
+        .catch(err => { console.error(`Save of room "${name}" failed:`, err.message); dirtyRooms.add(name); });
+    }));
+    return;
+  }
+  const out = {};
+  for (const [name, r] of rooms) out[name] = cleanForSave(r);
+  fs.mkdirSync(path.dirname(DATA_FILE), { recursive: true });
+  fs.writeFileSync(DATA_FILE, JSON.stringify(out));
+}
+// Render stops the old server when it deploys an update: save everything first.
+for (const sig of ['SIGTERM', 'SIGINT']) {
+  process.on(sig, async () => {
+    for (const name of rooms.keys()) dirtyRooms.add(name);
+    try { await flushSaves(); } catch (e) { console.error('Final save failed:', e.message); }
+    process.exit(0);
+  });
 }
 function getRoom(name) {
   if (!rooms.has(name)) rooms.set(name, { objects: [], env: { night: 0, rain: 0 }, players: new Map() });
@@ -134,7 +178,7 @@ io.on('connection', (socket) => {
     };
     room.objects.push(item);
     io.to(roomName).emit('placed', { item, tempId });       // to everyone, including the sender (confirms its tempId)
-    saveSoon();
+    saveSoon(room);
   });
 
   socket.on('remove', (d = {}) => {
@@ -145,14 +189,14 @@ io.on('connection', (socket) => {
     if (o.lockedBy && o.lockedBy !== socket.id) return socket.emit('lockDenied', { id: o.id, name: o.lockName });
     room.objects.splice(i, 1);
     socket.to(roomName).emit('removed', { id: d.id });
-    saveSoon();
+    saveSoon(room);
   });
 
   socket.on('clear', () => {
     if (!room) return;
     room.objects = [];
     socket.to(roomName).emit('cleared');
-    saveSoon();
+    saveSoon(room);
   });
 
   // ---- Moving furniture: lock → drag (live preview) → objMove (final) or unlock (cancel)
@@ -187,7 +231,7 @@ io.on('connection', (socket) => {
     Object.assign(o, { x: d.x, z: d.z, rot: d.rot, aabb: { minX: a.minX, maxX: a.maxX, minZ: a.minZ, maxZ: a.maxZ } });
     delete o.lockedBy; delete o.lockName;
     socket.to(roomName).emit('objMoved', { id: o.id, x: o.x, z: o.z, rot: o.rot, aabb: o.aabb });
-    saveSoon();
+    saveSoon(room);
   });
 
   socket.on('unlock', (d = {}) => {
@@ -201,7 +245,7 @@ io.on('connection', (socket) => {
     if (!room) return;
     room.env = { night: d.night ? 1 : 0, rain: d.rain ? 1 : 0 };
     socket.to(roomName).emit('env', room.env);
-    saveSoon();
+    saveSoon(room);
   });
 
   socket.on('move', (d = {}) => {
@@ -217,8 +261,7 @@ io.on('connection', (socket) => {
   });
 });
 
-loadRooms();
-server.listen(PORT, () => {
+loadRooms().then(() => server.listen(PORT, () => {
   console.log(`\n  ArchViz Studio running → http://localhost:${PORT}  (open this on the laptop)`);
   const urls = lanUrls();
   if (!urls.length) { console.log('  No Wi-Fi network found: connect to Wi-Fi to let phones join.\n'); return; }
@@ -230,4 +273,4 @@ server.listen(PORT, () => {
     require('qrcode-terminal').generate(phoneUrl, { small: true });
   } catch { console.log('  (run `npm install` again to get a scannable QR code here)'); }
   console.log('');
-});
+}));
