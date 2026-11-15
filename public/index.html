@@ -30,6 +30,14 @@
   canvas { touch-action: none; }
   /* ---- touch controls (phones / tablets) ---- */
   #touch-ui { display: none; }
+  /* Hide-UI mode (H on keyboard, 👁 button on phones): only the 3D view stays */
+  body.ui-hidden #topbar, body.ui-hidden #dock, body.ui-hidden #hover-label, body.ui-hidden #crosshair, body.ui-hidden #netpanel,
+  body.ui-hidden #touch-actions, body.ui-hidden #touch-btns, body.ui-hidden #emote-bar, body.ui-hidden #resume { visibility: hidden !important; }
+  #t-hide { display: none; position: fixed; z-index: 60; top: calc(10px + env(safe-area-inset-top)); left: 50%; transform: translateX(-50%);
+    width: 44px; height: 44px; border-radius: 999px; border: 1px solid rgba(255,255,255,.14); background: rgba(18,22,32,.6);
+    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); color: #fff; font-size: 20px; touch-action: manipulation; transition: opacity .3s; }
+  body.touch #t-hide { display: block; }
+  body.ui-hidden #t-hide { opacity: .35; }
   body.touch #touch-ui { display: block; }
   #joy { position: fixed; left: calc(22px + env(safe-area-inset-left)); bottom: 112px; width: 128px; height: 128px; border-radius: 50%; z-index: 35; touch-action: none; }
   #joy-knob { position: absolute; left: 39px; top: 39px; width: 50px; height: 50px; border-radius: 50%; background: rgba(255,255,255,.85); box-shadow: 0 4px 14px rgba(0,0,0,.4); pointer-events: none; }
@@ -173,6 +181,7 @@
 <div id="hs-banner" class="glass"></div>
 <div id="hs-blind"><div>🙈 You're the seeker</div><b>15</b><div>Close your eyes… everyone is hiding!</div></div>
 
+<button id="t-hide" title="Hide / show buttons">👁</button>
 <div id="touch-ui">
   <div id="joy" class="glass"><div id="joy-knob"></div></div>
   <div id="touch-actions">
@@ -2018,6 +2027,16 @@ document.getElementById('btn-redo').onclick = () => started && redo();
 const modeHint = document.getElementById('resume');
 const crosshair = document.getElementById('crosshair');
 let hintTimer = 0, photoMode = false, wantScreenshot = false;
+// Hide every button and label so only the 3D view is left. Keyboard H also adds depth-of-field blur (photo mode);
+// the phone button doesn't (blur is heavy on phones). The joystick stays so you can still walk around.
+function setUIHidden(on, blur = false) {
+  photoMode = on; bokehPass.enabled = on && blur && !LITE;
+  document.body.classList.toggle('ui-hidden', on);
+  avatarGroup.children.forEach(a => { if (a.userData.tag) a.userData.tag.visible = !on; });
+  const b = document.getElementById('t-hide'); if (b) b.textContent = on ? '🙈' : '👁';
+}
+document.getElementById('t-hide').addEventListener('click', (e) => { e.stopPropagation(); setUIHidden(!photoMode); });
+document.getElementById('t-hide').addEventListener('touchstart', (e) => e.stopPropagation(), { passive: true });
 function flashHint(text, ms = 2500) {
   modeHint.textContent = text; modeHint.style.display = 'block';
   clearTimeout(hintTimer); hintTimer = setTimeout(() => modeHint.style.display = 'none', ms);
@@ -2082,11 +2101,7 @@ document.addEventListener('keydown', (e) => {
   if (e.code === 'KeyZ') select(selected - 1);
   if (e.code === 'KeyX') select(selected + 1);
   if (e.code === 'KeyI') { invertLook *= -1; flashHint(invertLook > 0 ? 'Swipe direction: normal' : 'Swipe direction: inverted', 1500); }
-  if (e.code === 'KeyH') {
-    photoMode = !photoMode; bokehPass.enabled = photoMode;
-    document.querySelectorAll('#topbar, #dock, #hover-label, #crosshair, #netpanel').forEach(el => el.style.visibility = photoMode ? 'hidden' : '');
-    avatarGroup.children.forEach(a => { if (a.userData.tag) a.userData.tag.visible = !photoMode; });
-  }
+  if (e.code === 'KeyH') setUIHidden(!photoMode, true);
   if (e.code === 'KeyP') wantScreenshot = true;
   if (e.code === 'Digit0' && e.shiftKey) { camera.fov = 62; camera.updateProjectionMatrix(); }
   const m = e.code.match(/^Digit(\d)$/); if (m) select((+m[1] + 9) % 10);
