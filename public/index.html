@@ -230,6 +230,16 @@ const EYE = 1.65, RADIUS = 0.28;        // eye height and body radius of the vis
 const net = { socket: null, online: false, myId: null, room: (new URLSearchParams(location.search).get('room') || 'house').slice(0, 40) };
 let started = false;
 const isTouch = matchMedia('(pointer: coarse)').matches || matchMedia('(hover: none)').matches;
+// Lite mode for low-memory phones (≈3 GB RAM): half-size textures, no post effects, no downloaded 3D models.
+// Turns on by itself on small phones, or after the phone once ran out of GPU memory. Force with ?lite=1 / ?lite=0.
+const LITE = (() => {
+  const q = new URLSearchParams(location.search).get('lite');
+  if (q === '1') return true;
+  if (q === '0') { try { localStorage.removeItem('archvizLite'); } catch (e) {} return false; }
+  try { if (localStorage.getItem('archvizLite') === '1') return true; } catch (e) {}
+  const mem = navigator.deviceMemory, cores = navigator.hardwareConcurrency || 8;
+  return (mem && mem <= 3) || (isTouch && cores <= 4);
+})();
 const joy = { x: 0, y: 0, id: null, run: false };
 
 const furnitureTypes = [
@@ -275,7 +285,7 @@ const MODEL_SOURCES = {
 const modelCache = {};
 
 // ---------------------------------------------------------------- renderer
-const pixelRatio = Math.min(window.devicePixelRatio, 1.5);
+const pixelRatio = LITE ? 0.75 : Math.min(window.devicePixelRatio, 1.5);
 const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance' });
 renderer.setPixelRatio(pixelRatio);
 renderer.setSize(innerWidth, innerHeight);
@@ -284,6 +294,13 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;   // applied by OutputPass
 renderer.toneMappingExposure = 1.0;
 document.body.prepend(renderer.domElement);
+// If the phone runs out of GPU memory the browser kills the 3D view. Remember it and reload in Lite mode.
+renderer.domElement.addEventListener('webglcontextlost', (e) => {
+  e.preventDefault();
+  if (LITE) { alert('This phone ran out of memory for 3D. Close other apps and tabs, then reopen the game.'); return; }
+  try { localStorage.setItem('archvizLite', '1'); } catch (err) {}
+  location.reload();
+});
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(62, innerWidth / innerHeight, 0.05, 3000);
@@ -334,9 +351,11 @@ function texFromData(data, w, h, srgb, repeat = [1, 1]) {
   return t;
 }
 function genTex(w, h, srgb, repeat, fn) {
+  const k = LITE && w >= 256 ? 2 : 1;            // Lite: half resolution (¼ of the memory), same pattern
+  w /= k; h /= k;
   const d = new Uint8ClampedArray(w * h * 4);
   for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
-    const [r, g, b] = fn(x, y); const i = (y * w + x) * 4;
+    const [r, g, b] = fn(x * k, y * k); const i = (y * w + x) * 4;
     d[i] = r; d[i + 1] = g; d[i + 2] = b; d[i + 3] = 255;
   }
   return texFromData(d, w, h, srgb, repeat);
@@ -651,7 +670,7 @@ function buildGarden() {
   // Grass tufts scattered over the lawn (instanced, no shadows → cheap)
   const tuftGeo = new THREE.ConeGeometry(0.035, 0.2, 3); tuftGeo.translate(0, 0.1, 0);
   const tuftMat = std({ color: 0x4f8a35, roughness: 0.9 });
-  const TUFTS = 5000, tufts = new THREE.InstancedMesh(tuftGeo, tuftMat, TUFTS), q = new THREE.Quaternion(), sc = new THREE.Vector3(), ps = new THREE.Vector3();
+  const TUFTS = LITE ? 1200 : 5000, tufts = new THREE.InstancedMesh(tuftGeo, tuftMat, TUFTS), q = new THREE.Quaternion(), sc = new THREE.Vector3(), ps = new THREE.Vector3();
   const inside = (x, z, r, pad) => x > r.x0 - pad && x < r.x1 + pad && z > r.z0 - pad && z < r.z1 + pad;
   const HOUSE = { x0: -W / 2 - T, x1: W / 2 + T, z0: -D / 2 - T, z1: D / 2 + T };
   let n = 0;
@@ -953,7 +972,7 @@ skyU.mieDirectionalG.value = 0.8;
 
 const sunLight = new THREE.DirectionalLight(0xfff1dc, 3.4);
 sunLight.castShadow = true;
-sunLight.shadow.mapSize.set(2048, 2048);
+sunLight.shadow.mapSize.set(LITE ? 1024 : 2048, LITE ? 1024 : 2048);
 Object.assign(sunLight.shadow.camera, { left: -16, right: 16, top: 16, bottom: -16, near: 1, far: 90 });
 sunLight.shadow.bias = -0.0003; sunLight.shadow.normalBias = 0.02;
 scene.add(sunLight, sunLight.target);
@@ -987,7 +1006,7 @@ function assignDownlights(dt) {
 const LIGHT_POOL = [];
 for (let i = 0; i < 5; i++) {
   const l = new THREE.PointLight(0xffffff, 0, 0, 2);
-  if (i < 1) {                                   // only 1 may cast shadows (each costs 6 renders + shader work)
+  if (i < (LITE ? 0 : 1)) {                      // only 1 may cast shadows (none in Lite) (each costs 6 renders + shader work)
     l.castShadow = true; l.shadow.mapSize.set(512, 512); l.shadow.bias = -0.002;
     l.shadow.camera.near = 0.05; l.shadow.autoUpdate = false;
   }
@@ -1076,12 +1095,13 @@ const dustMat = new THREE.PointsMaterial({ color: 0xfff2dd, size: 0.012, transpa
 const dust = new THREE.Points(dustGeo, dustMat); dust.frustumCulled = false; scene.add(dust);
 
 // ================================================================ post-processing
-const rt = new THREE.WebGLRenderTarget(innerWidth * pixelRatio, innerHeight * pixelRatio, { type: THREE.HalfFloatType, samples: 4 }); // MSAA inside the composer
+const rt = LITE ? new THREE.WebGLRenderTarget(1, 1) : new THREE.WebGLRenderTarget(innerWidth * pixelRatio, innerHeight * pixelRatio, { type: THREE.HalfFloatType, samples: 4 }); // MSAA inside the composer
 const composer = new EffectComposer(renderer, rt);
+if (LITE) composer.setSize = composer.setPixelRatio = () => {};   // Lite draws straight to the screen: no extra full-screen buffers
 composer.setPixelRatio(pixelRatio);
 composer.setSize(innerWidth, innerHeight);
 composer.addPass(new RenderPass(scene, camera));
-const gtaoPass = new GTAOPass(scene, camera, innerWidth, innerHeight);   // contact shadows / ambient occlusion
+const gtaoPass = new GTAOPass(scene, camera, LITE ? 1 : innerWidth, LITE ? 1 : innerHeight);   // contact shadows / ambient occlusion
 try { gtaoPass.updateGtaoMaterial({ radius: 0.5, thickness: 1, distanceFallOff: 1 }); } catch (e) { /* older builds */ }
 // Hide particles and glass while GTAO renders its depth/normal buffers, otherwise they get AO halos.
 const gtaoRender = gtaoPass.render.bind(gtaoPass);
@@ -1092,7 +1112,7 @@ gtaoPass.render = (...args) => {
   [rain.visible, dust.visible, glassGroup.visible] = v;
 };
 composer.addPass(gtaoPass);
-const bloomPass = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.25, 0.5, 0.92);
+const bloomPass = new UnrealBloomPass(LITE ? new THREE.Vector2(1, 1) : new THREE.Vector2(innerWidth, innerHeight), 0.25, 0.5, 0.92);
 composer.addPass(bloomPass);
 // Depth of field, only enabled in photo mode (H)
 const bokehPass = new BokehPass(scene, camera, { focus: 3, aperture: 0.0025, maxblur: 0.006 });
@@ -1988,7 +2008,7 @@ function applyQuality(i) {
   }
   btnQ.classList.toggle('on', i === 0);
 }
-function toggleQuality() { autoQuality = false; applyQuality((qIndex + 1) % QUALITY.length); flashHint(`Quality: ${QUALITY[qIndex].name}`, 1500); }
+function toggleQuality() { if (LITE) { flashHint('Lite mode is on for this phone (open the link with ?lite=0 to turn it off)', 3000); return; } autoQuality = false; applyQuality((qIndex + 1) % QUALITY.length); flashHint(`Quality: ${QUALITY[qIndex].name}`, 1500); }
 function setExposure(v) { baseExposure = THREE.MathUtils.clamp(v, 0.3, 3); expLabel.textContent = `EV ${baseExposure.toFixed(2)}`; }
 btnNight.onclick = toggleNight; btnRain.onclick = toggleRain; btnQ.onclick = toggleQuality;
 document.getElementById('btn-clear').onclick = userClear;
@@ -2905,7 +2925,7 @@ buildInventoryUI();
 rebuildGhost();
 initPet();
 setupFunUI();
-applyQuality(1);              // Medium by default (Q for High); auto-drops to Low if FPS stays under 40
+applyQuality(LITE ? 2 : 1);   // Medium by default (Low in Lite) (Q for High); auto-drops to Low if FPS stays under 40
 
 // ================================================================ loop
 const clock = new THREE.Clock();
@@ -2956,7 +2976,7 @@ renderer.setAnimationLoop(() => {
     bokehPass.uniforms.focus.value = focusDist;
   }
 
-  composer.render();
+  if (LITE) renderer.render(scene, camera); else composer.render();
   if (wantScreenshot) {                     // grab the frame right after rendering it
     wantScreenshot = false;
     const a = document.createElement('a');
@@ -3004,8 +3024,8 @@ function loadFloorTextures() {
     markSceneChanged();
   }).catch(e => console.warn('Floor textures unavailable, keeping procedural floor:', e && e.message));
 }
-loadModels();
-loadFloorTextures();
+if (!LITE) loadModels();          // Lite keeps the built-in furniture (scanned models need lots of memory)
+if (!LITE) loadFloorTextures();
 </script>
 <script>
   // Register the service worker (only on https or localhost, where browsers allow it)
