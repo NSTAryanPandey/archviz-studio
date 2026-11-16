@@ -37,6 +37,7 @@
     width: 44px; height: 44px; border-radius: 999px; border: 1px solid rgba(255,255,255,.14); background: rgba(18,22,32,.6);
     backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); color: #fff; font-size: 20px; touch-action: manipulation; transition: opacity .3s; }
   body.touch #t-hide { display: block; }
+  body.driving #touch-btns, body.driving #ghost-hint { display: none !important; }
   body.ui-hidden #t-hide { opacity: .35; }
   body.touch #touch-ui { display: block; }
   #joy { position: fixed; left: calc(22px + env(safe-area-inset-left)); bottom: 112px; width: 128px; height: 128px; border-radius: 50%; z-index: 35; touch-action: none; }
@@ -1835,6 +1836,7 @@ function blocked(x, z) {
     if (c.level !== lv || c.kind === 'pool') continue;
     if (x > c.minX - RADIUS && x < c.maxX + RADIUS && z > c.minZ - RADIUS && z < c.maxZ + RADIUS) return true;
   }
+  if (lv === 0 && cars) for (const c of cars.values()) if (inCarBox(c, x, z, RADIUS)) return true;
   for (const o of placed) {
     if (o.userData.walkable || (carry && o === carry.g) || levelOfY(o.position.y) !== lv) continue;
     const c = o.userData.aabb;
@@ -1852,6 +1854,7 @@ function updateMovement(dt) {
   const tilt = active ? (keys.ArrowUp ? 1 : 0) - (keys.ArrowDown ? 1 : 0) : 0;
   if (turn || tilt) { look.yaw += turn * 1.8 * dt; look.pitch = THREE.MathUtils.clamp(look.pitch + tilt * 1.2 * dt, -1.45, 1.45); applyLook(); }
   // Sitting / lying: the camera stays on the seat; any movement stands you up
+  if (me.car) return;                                   // driving / riding: the car module moves the camera
   if (me.sit || me.pose === 'floor' || hsFrozen()) {
     if ((f || r) && !hsFrozen()) standUp();
     else {
@@ -1921,6 +1924,7 @@ function applyLighting() {
   const lightsOn = Math.max(1 - dayK, rainMix * 0.5);
   downlights.forEach(s => s.intensity = 11 * lightsOn);
   MAT.cove.emissiveIntensity = 0.15 + 3.2 * lightsOn;
+  if (carMats) { carMats.head.emissiveIntensity = 1.2 + 5 * lightsOn; carMats.tail.emissiveIntensity = 0.7 + 2.5 * lightsOn; }
   MAT.downlight.emissiveIntensity = 0.3 + 10 * lightsOn;
   buildingMats.forEach(m => m.emissiveIntensity = 1.4 * (1 - dayK));
   dustMat.opacity = 0.2 * dayK * (1 - rainMix);
@@ -2066,6 +2070,7 @@ document.addEventListener('pointerlockerror', lockUnavailable);
 window.addEventListener('blur', () => Object.keys(keys).forEach(k => keys[k] = false));
 
 function primaryAction(button) {
+  if (me.car) return;                                              // no building while driving
   if (button === 0 && hsTryTag()) return;
   if (button === 0) {
     if (carry) dropCarry();                                        // click while carrying = drop
@@ -2089,7 +2094,8 @@ document.addEventListener('keydown', (e) => {
   if (e.code === 'Backquote') select(-1);
   if (e.code === 'Delete' || e.code === 'Backspace') { if (carry) userRemove(carry.g); else if (hovered) userRemove(hovered); }
   if (e.code === 'KeyE') interact();
-  if (e.code === 'Space') { e.preventDefault(); jump(); }
+  if (e.code === 'KeyB' && me.car) honk();
+  if (e.code === 'Space') { e.preventDefault(); if (!me.car) jump(); }   // in a car Space is the brake
   if (e.code === 'KeyK') callPet();
   if (e.code === 'KeyG') toggleParty();
   if (e.shiftKey && /^Digit[1-5]$/.test(e.code)) { doEmote(EMOTES[+e.code.slice(5) - 1].id); return; }
@@ -2243,6 +2249,7 @@ function setupTouch() {
   const tap = (id, fn) => document.getElementById(id).addEventListener('click', (e) => { e.preventDefault(); if (started) fn(); });
   tap('t-move', () => { if (carry) cancelCarry(); else if (hovered) pickUp(hovered); else flashHint('Aim the dot at a piece of furniture', 1500); });
   tap('t-place', () => {
+    if (me.car) return;
     if (carry) { dropCarry(); return; }
     updateGhost();
     if (ghost && ghost.visible && ghostValid) { primaryAction(0); if (navigator.vibrate) navigator.vibrate(15); }
@@ -2358,18 +2365,22 @@ function standUp() {
   me.sit = null; me.pose = 'stand';
 }
 function jump() {
+  if (me.car) { honk(); return; }                          // in a car the jump button is the horn
   if (me.sit || me.pose === 'floor') { standUp(); return; }
   if (me.jy === 0 && !hsFrozen()) me.vy = 4.3;
 }
 function interact() {
   if (hsTryTag()) return;
+  if (me.car) { exitCar(); return; }
   if (me.sit || me.pose === 'floor') { standUp(); return; }
+  if (tryEnterCar()) return;
   if (hovered && trySit(hovered)) return;
   flashHint(isTouch ? 'Aim the dot at a sofa, chair, bench or bed' : 'Look at a sofa, chair, bench or bed to sit', 1500);
 }
 // Where others should see me (sent with every position update)
 function myPose() {
   const p = camera.position;
+  if (me.car) { const w = carSeatWorld(cars.get(me.car.id), me.car.seat); return { x: w.x, z: w.z, yaw: w.yaw, pose: 'sit', sy: w.sy, base: 0 }; }
   if (me.sit) {
     const st = me.sit;
     if (st.lie) { _v.copy(st.pos).addScaledVector(st.front, 0.85); return { x: _v.x, z: _v.z, yaw: st.yaw, pose: 'lie', sy: st.pos.y, base: levelY(st.preLevel) }; }
@@ -2822,6 +2833,8 @@ function updateAvatars(dt) {
   const hideTags = photoMode || iAmSeeker();                        // the seeker can't spot people by their name tags
   players.forEach(p => {
     const g = p.group, tg = p.target, body = g.children[0], kk = p.avatar === 'girl' ? 0.95 : 1;
+    const ride = riderSeat(p.id);
+    if (ride) { Object.assign(tg, { x: ride.x, z: ride.z, yaw: ride.yaw, pose: 'sit', sy: ride.sy, y: 0 }); g.position.set(ride.x, 0, ride.z); g.rotation.y = ride.yaw; }
     const ox = g.position.x, oz = g.position.z;
     g.position.x += (tg.x - g.position.x) * k;
     g.position.z += (tg.z - g.position.z) * k;
@@ -2872,8 +2885,10 @@ function connectNet() {
   net.socket = socket; setNetStatus();
   socket.on('connect', () => socket.emit('join', { room: net.room, name: myName, color: myColor, avatar: myAvatar }));
   socket.on('disconnect', () => { net.online = false; setNetStatus(); [...players.keys()].forEach(removePlayer); });
-  socket.on('init', ({ you, objects, players: list, env, pet: petState, hs: hsState }) => {
+  socket.on('init', ({ you, objects, players: list, env, pet: petState, hs: hsState, cars: carState }) => {
     net.online = true; net.myId = you;
+    if (me.car) exitCar(true);
+    if (carState) applyCarState(carState);
     [...placed].forEach(removeItem);                         // the server's room is the truth
     if (carry) cancelCarry(false);
     undoStack.length = 0; redoStack.length = 0; updateUndoUI();
@@ -2933,8 +2948,254 @@ function connectNet() {
   socket.on('hs:error', (msg) => flashHint(msg, 2500));
   socket.on('playerJoined', (p) => { addPlayer(p); setNetStatus(); flashHint(`${p.name} joined`, 1800); });
   socket.on('playerLeft', ({ id }) => { const p = players.get(id); removePlayer(id); setNetStatus(); if (p) flashHint(`${p.name} left`, 1800); });
+  socket.on('car:seats', ({ id, seats }) => {
+    const c = cars.get(id); if (!c) return;
+    c.seats = seats;
+    if (me.car && me.car.id === id && seats[me.car.seat] !== net.myId) { exitCar(true); flashHint('Someone else took that seat', 1800); }
+  });
+  socket.on('car:denied', ({ id }) => { if (me.car && me.car.id === id) { exitCar(true); flashHint('That seat is taken', 1500); } });
+  socket.on('car:moved', ({ id, x, z, yaw, speed }) => { const c = cars.get(id); if (c && !(me.car && me.car.id === id && me.car.seat === 0)) c.target = { x, z, yaw, speed }; });
+  socket.on('car:horned', ({ id }) => { const c = cars.get(id); if (c) hornSound(c); });
   socket.on('playerMoved', ({ id, x, z, yaw, pitch, y, pose, sy }) => { const p = players.get(id); if (p) Object.assign(p.target, { x, z, yaw, pitch, y, pose, sy }); });
 }
+
+// ================================================================ cars
+// Two original cars to drive around the garden: a big 7-seat SUV and a low sporty sedan. Built from simple shapes,
+// no downloaded models, no real lights, no shadow-map updates (a soft blob shadow instead), so they run on low-end
+// phones. Right-hand drive, like in India. Multiplayer: the driver sends the car's position, everyone sees it.
+var cars = null, carMats = null;
+const CAR_DEFS = {
+  suv:   { name: 'SUV', plate: 'KA 01 ARYAN', color: 0x14161b, len: 4.6, wid: 1.95, wr: 0.42, wx: 0.8, wz: 1.45, maxV: 9, acc: 5, sy: 0.8, camD: 7.2, camH: 3.1,
+           park: { x: -13, z: -1.4, yaw: 0 },
+           seats: [[-0.42, 0.35], [0.42, 0.35], [-0.5, -0.55], [0, -0.55], [0.5, -0.55], [-0.42, -1.4], [0.42, -1.4]] },
+  sedan: { name: 'Sedan', plate: 'KA 05 ARYAN', color: 0xb0121c, len: 4.6, wid: 1.8, wr: 0.33, wx: 0.75, wz: 1.42, maxV: 12, acc: 6.5, sy: 0.52, camD: 6.4, camH: 2.5,
+           park: { x: -13, z: 4.6, yaw: 0 },
+           seats: [[-0.4, 0.2], [0.4, 0.2], [-0.4, -0.85], [0.4, -0.85]] },
+};
+function plateTexture(text) {
+  const c = document.createElement('canvas'); c.width = 512; c.height = 112; const x = c.getContext('2d');
+  x.fillStyle = '#f7f7f2'; x.fillRect(0, 0, 512, 112);
+  x.fillStyle = '#1d4fb8'; x.fillRect(0, 0, 58, 112);                                  // blue strip with IND
+  x.fillStyle = '#fff'; x.font = 'bold 26px Inter, Arial, sans-serif'; x.textAlign = 'center'; x.fillText('IND', 29, 96);
+  x.strokeStyle = '#111'; x.lineWidth = 6; x.strokeRect(3, 3, 506, 106);
+  x.fillStyle = '#111'; x.font = 'bold 66px Inter, Arial, sans-serif'; x.fillText(text, 285, 80);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
+}
+let blobTex = null;
+function blobShadow(w, l) {
+  if (!blobTex) {
+    const c = document.createElement('canvas'); c.width = c.height = 128; const x = c.getContext('2d');
+    const g = x.createRadialGradient(64, 64, 10, 64, 64, 64); g.addColorStop(0, 'rgba(0,0,0,0.55)'); g.addColorStop(1, 'rgba(0,0,0,0)');
+    x.fillStyle = g; x.fillRect(0, 0, 128, 128); blobTex = new THREE.CanvasTexture(c);
+  }
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(w, l), new THREE.MeshBasicMaterial({ map: blobTex, transparent: true, depthWrite: false }));
+  m.rotation.x = -Math.PI / 2; m.position.y = 0.02; m.renderOrder = 1; return m;
+}
+function buildCar(id) {
+  const d = CAR_DEFS[id], g = new THREE.Group(), body = new THREE.Group(), L = d.len / 2, Wd = d.wid;
+  if (!carMats) carMats = {
+    glass: std({ color: 0x0b1118, roughness: 0.06, metalness: 0.8, transparent: true, opacity: 0.7 }),
+    trim: std({ color: 0x111214, roughness: 0.55 }),
+    chrome: std({ color: 0xd8dbe0, metalness: 1, roughness: 0.18 }),
+    tyre: std({ color: 0x141414, roughness: 0.92 }),
+    rim: std({ color: 0xb9bdc4, metalness: 0.9, roughness: 0.28 }),
+    head: std({ color: 0xffffff, emissive: 0xeaf3ff, emissiveIntensity: 1.2 }),
+    tail: std({ color: 0x3a0000, emissive: 0xff1c1c, emissiveIntensity: 0.7 }),
+  };
+  const M = carMats, paint = new THREE.MeshPhysicalMaterial({ color: d.color, metalness: 0.55, roughness: 0.32, clearcoat: 1, clearcoatRoughness: 0.08 });
+  const add = (m) => { body.add(m); return m; };
+  if (id === 'suv') {
+    add(rbox(Wd, 0.82, d.len, paint, 0, 0.86, 0, 0.14));                               // tall body
+    add(rbox(Wd + 0.04, 0.24, d.len - 0.25, M.trim, 0, 0.5, 0, 0.06));                  // rugged lower cladding
+    add(rbox(Wd - 0.14, 0.7, 3.0, M.glass, 0, 1.62, -0.42, 0.12));                      // glasshouse
+    add(rbox(Wd - 0.1, 0.09, 3.05, paint, 0, 2.0, -0.42, 0.05));                        // roof
+    for (const z of [1.02, -0.35, -1.88]) for (const sx of [-1, 1]) add(rbox(0.07, 0.7, 0.12, paint, sx * (Wd / 2 - 0.1), 1.62, z, 0.02));   // pillars
+    for (const sx of [-1, 1]) add(rbox(0.05, 0.05, 2.5, M.chrome, sx * 0.72, 2.08, -0.42, 0.02));                                            // roof rails
+    add(rbox(1.3, 0.26, 0.05, M.trim, 0, 0.84, L, 0.03));                              // grille panel
+    add(box(Wd - 0.34, 0.06, 0.04, M.head, 0, 1.15, L + 0.01));                         // full-width LED light bar
+    add(box(Wd - 0.3, 0.07, 0.04, M.tail, 0, 1.16, -L - 0.01));                         // rear light bar
+    add(rbox(Wd, 0.2, 0.16, M.trim, 0, 0.5, L - 0.03, 0.05)); add(rbox(Wd, 0.2, 0.16, M.trim, 0, 0.5, -L + 0.03, 0.05));   // bumpers
+    add(box(0.9, 0.05, 0.08, M.chrome, 0, 0.42, L + 0.02));                             // skid plate
+  } else {
+    add(rbox(Wd, 0.56, d.len, paint, 0, 0.6, 0, 0.14));                                 // low body
+    add(rbox(Wd - 0.22, 0.48, 2.25, M.glass, 0, 1.1, -0.28, 0.2));                      // sleek glasshouse
+    add(rbox(Wd - 0.26, 0.06, 1.6, paint, 0, 1.36, -0.32, 0.03));                       // roof
+    add(rbox(Wd + 0.02, 0.1, d.len - 1.3, M.trim, 0, 0.36, 0, 0.04));                   // side skirts
+    add(box(Wd - 0.5, 0.04, 0.14, paint, 0, 0.91, -L + 0.16));                          // small boot lip spoiler
+    add(rbox(1.1, 0.16, 0.05, M.trim, 0, 0.5, L, 0.03));                               // lower air intake
+    add(box(Wd - 0.36, 0.045, 0.04, M.head, 0, 0.8, L + 0.01));                         // thin LED strip
+    add(box(Wd - 0.3, 0.06, 0.04, M.tail, 0, 0.82, -L - 0.01));                         // rear light bar
+  }
+  for (const sx of [-1, 1]) add(rbox(0.2, 0.11, 0.09, paint, sx * (Wd / 2 + 0.09), id === 'suv' ? 1.3 : 0.95, id === 'suv' ? 1.0 : 0.8, 0.03));   // mirrors
+  const plate = plateTexture(d.plate), plateMat = new THREE.MeshBasicMaterial({ map: plate });
+  const pf = new THREE.Mesh(new THREE.PlaneGeometry(0.52, 0.115), plateMat); pf.position.set(0, id === 'suv' ? 0.66 : 0.62, L + 0.035); add(pf);
+  const pr = pf.clone(); pr.position.z = -L - 0.035; pr.rotation.y = Math.PI; add(pr);
+  body.children.forEach(m => { m.castShadow = false; m.receiveShadow = true; });
+  mergeMeshes(body.children.filter(m => m.isMesh), body, false);
+  g.add(body, blobShadow(Wd + 0.7, d.len + 0.8));
+  // wheels: pivot (steers) → spin (rolls) → tyre + rim
+  const wheels = [];
+  for (const sx of [-1, 1]) for (const sz of [1, -1]) {
+    const pivot = new THREE.Group(); pivot.position.set(sx * d.wx, d.wr, sz * d.wz); g.add(pivot);
+    const spin = new THREE.Group(); pivot.add(spin);
+    const tyre = cyl(d.wr, d.wr, 0.28, M.tyre, 0, 0, 0, 20); tyre.rotation.z = Math.PI / 2; spin.add(tyre);
+    const rim = cyl(d.wr * 0.62, d.wr * 0.62, 0.29, M.rim, 0, 0, 0, 10); rim.rotation.z = Math.PI / 2; spin.add(rim);
+    wheels.push({ pivot, spin, front: sz > 0 });
+  }
+  return { g, wheels };
+}
+function initCars() {
+  cars = new Map();
+  const pad = new THREE.Mesh(new THREE.PlaneGeometry(6, 13), std({ color: 0x8d8a84, roughness: 0.85, bumpMap: plasterBump, bumpScale: 0.4 }));   // paved parking pad
+  pad.rotation.x = -Math.PI / 2; pad.position.set(-13, 0.012, 1.6); pad.receiveShadow = true; scene.add(pad);
+  for (const id of Object.keys(CAR_DEFS)) {
+    const d = CAR_DEFS[id], { g, wheels } = buildCar(id);
+    scene.add(g);
+    cars.set(id, { id, def: d, g, wheels, x: d.park.x, z: d.park.z, yaw: d.park.yaw, speed: 0, steer: 0, roll: 0, target: null, seats: Array(d.seats.length).fill(null) });
+  }
+}
+function applyCarState(state) {
+  for (const s of Object.values(state)) {
+    const c = cars.get(s.id); if (!c) continue;
+    Object.assign(c, { x: s.x, z: s.z, yaw: s.yaw, speed: 0, target: null, seats: s.seats || c.seats });
+  }
+}
+// car-local (lx, lz) → world.  Local +Z is the front of the car.
+function carToWorld(c, lx, lz) {
+  const cs = Math.cos(c.yaw), sn = Math.sin(c.yaw);
+  return { x: c.x + lx * cs + lz * sn, z: c.z - lx * sn + lz * cs };
+}
+function inCarBox(c, x, z, pad = 0, cx = c.x, cz = c.z, yaw = c.yaw) {
+  const dx = x - cx, dz = z - cz, cs = Math.cos(yaw), sn = Math.sin(yaw);
+  const lx = dx * cs - dz * sn, lz = dx * sn + dz * cs;
+  return Math.abs(lx) < c.def.wid / 2 + pad && Math.abs(lz) < c.def.len / 2 + pad;
+}
+function carSeatWorld(c, seat) {
+  const [lx, lz] = c.def.seats[seat], w = carToWorld(c, lx, lz);
+  return { x: w.x, z: w.z, yaw: c.yaw + Math.PI, sy: c.def.sy };
+}
+function riderSeat(playerId) {
+  if (!cars) return null;
+  for (const c of cars.values()) { const i = c.seats.indexOf(playerId); if (i >= 0) return carSeatWorld(c, i); }
+  return null;
+}
+// Would the car hit something at (x, z, yaw)? Checks corners and side midpoints against walls, the pool,
+// furniture/trees in the garden, the fence and the other car.
+function carHits(c, x, z, yaw) {
+  const hw = c.def.wid / 2, hl = c.def.len / 2, cs = Math.cos(yaw), sn = Math.sin(yaw);
+  for (const sx of [-1, 1]) for (const sz of [-1, -0.33, 0.33, 1]) {
+    const px = x + sx * hw * cs + sz * hl * sn, pz = z - sx * hw * sn + sz * hl * cs;
+    if (Math.abs(px) > GW / 2 - 0.25 || Math.abs(pz) > GD / 2 - 0.25) return true;
+    for (const k of STATIC_COLLIDERS) if (k.level === 0 && px > k.minX && px < k.maxX && pz > k.minZ && pz < k.maxZ) return true;
+    for (const o of placed) {
+      if (o.userData.walkable || levelOfY(o.position.y) !== 0) continue;
+      const a = o.userData.aabb; if (px > a.minX && px < a.maxX && pz > a.minZ && pz < a.maxZ) return true;
+    }
+    for (const o of cars.values()) if (o !== c && inCarBox(o, px, pz)) return true;
+  }
+  // don't run over people walking around (anyone not sitting in a car)
+  for (const [pid, p] of players) if (!riderSeat(pid) && inCarBox(c, p.group.position.x, p.group.position.z, 0.15, x, z, yaw)) return true;
+  return false;
+}
+function tryEnterCar() {
+  if (!cars || me.level !== 0) return false;
+  let best = null;
+  for (const c of cars.values()) if (inCarBox(c, camera.position.x, camera.position.z, 1.3)) best = c;
+  if (!best) return false;
+  const seat = best.seats.indexOf(null);
+  if (seat < 0) { flashHint(`The ${best.def.name} is full`, 1500); return true; }
+  if (carry) cancelCarry(false);
+  best.seats[seat] = net.myId || 'me';
+  me.car = { id: best.id, seat }; me.pose = 'sit'; me.jy = 0; me.vy = 0; vel.set(0, 0, 0);
+  if (net.online) net.socket.emit('car:enter', { id: best.id, seat });
+  document.body.classList.add('driving');
+  const tj = document.getElementById('t-jump'), ts = document.getElementById('t-sit');
+  if (tj) tj.textContent = '📯'; if (ts) ts.textContent = '🚪';
+  const driver = seat === 0;
+  flashHint(driver
+    ? (isTouch ? `🚗 Driving the ${best.def.name} • Stick to drive • 📯 horn • 🚪 get out` : `🚗 Driving the ${best.def.name} • W/S drive • A/D steer • Space brake • B horn • E get out`)
+    : (isTouch ? `🚗 Riding in the ${best.def.name} • 📯 horn • 🚪 get out` : `🚗 Riding in the ${best.def.name} • B horn • E get out`), 4000);
+  return true;
+}
+function exitCar(silent = false) {
+  const c = cars.get(me.car.id), seat = me.car.seat, [sx, sz] = c.def.seats[seat];
+  if (seat === 0) c.speed = 0;
+  const side = sx < 0 ? -1 : 1, out = c.def.wid / 2 + 0.7;
+  me.level = 0; me.floorY = 0;
+  let spot = null;
+  for (const [lx, lz] of [[side * out, sz], [-side * out, sz], [0, c.def.len / 2 + 1], [0, -c.def.len / 2 - 1]]) {
+    const w = carToWorld(c, lx, lz); if (!blocked(w.x, w.z)) { spot = w; break; }
+  }
+  spot = spot || carToWorld(c, side * out, sz);
+  camera.position.set(spot.x, EYE, spot.z);
+  if (c.seats[seat] === (net.myId || 'me')) c.seats[seat] = null;
+  if (net.online && !silent) {
+    if (seat === 0) net.socket.emit('car:move', { id: c.id, x: c.x, z: c.z, yaw: c.yaw, speed: 0 });
+    net.socket.emit('car:exit');
+  }
+  me.car = null; me.pose = 'stand';
+  look.yaw = c.yaw + Math.PI; look.pitch = -0.05; applyLook();
+  document.body.classList.remove('driving');
+  const tj = document.getElementById('t-jump'), ts = document.getElementById('t-sit');
+  if (tj) tj.textContent = '🦘'; if (ts) ts.textContent = '🪑';
+}
+let hornCtx = null, lastHorn = 0;
+function hornSound(c) {
+  try {
+    hornCtx = hornCtx || new (window.AudioContext || window.webkitAudioContext)();
+    const dist = Math.hypot(c.x - camera.position.x, c.z - camera.position.z), vol = 0.18 / (1 + dist * 0.12);
+    const t0 = hornCtx.currentTime, g = hornCtx.createGain(), f = hornCtx.createBiquadFilter();
+    f.type = 'lowpass'; f.frequency.value = 1800; g.gain.setValueAtTime(0, t0);
+    g.gain.linearRampToValueAtTime(vol, t0 + 0.02); g.gain.setValueAtTime(vol, t0 + 0.38); g.gain.linearRampToValueAtTime(0, t0 + 0.45);
+    for (const hz of c.id === 'suv' ? [330, 415] : [420, 528]) { const o = hornCtx.createOscillator(); o.type = 'square'; o.frequency.value = hz; o.connect(f); o.start(t0); o.stop(t0 + 0.46); }
+    f.connect(g); g.connect(hornCtx.destination);
+  } catch (e) { /* no audio */ }
+}
+function honk() {
+  if (!me.car || performance.now() - lastHorn < 450) return;
+  lastHorn = performance.now();
+  const c = cars.get(me.car.id); hornSound(c);
+  if (net.online) net.socket.emit('car:horn', { id: c.id });
+}
+const _chase = new THREE.Vector3();
+function updateCars(dt) {
+  if (!cars) return;
+  for (const c of cars.values()) {
+    const d = c.def, driving = me.car && me.car.id === c.id && me.car.seat === 0;
+    if (driving) {
+      const f = THREE.MathUtils.clamp((keys.KeyW || keys.ArrowUp ? 1 : 0) - (keys.KeyS || keys.ArrowDown ? 1 : 0) - joy.y, -1, 1);
+      const r = THREE.MathUtils.clamp((keys.KeyD || keys.ArrowRight ? 1 : 0) - (keys.KeyA || keys.ArrowLeft ? 1 : 0) + joy.x, -1, 1);
+      if (f > 0) c.speed += f * d.acc * dt * (c.speed < 0 ? 2.2 : 1);
+      else if (f < 0) c.speed += f * (c.speed > 0.2 ? d.acc * 1.8 : d.acc * 0.6) * dt;
+      else c.speed -= Math.sign(c.speed) * Math.min(Math.abs(c.speed), 2.4 * dt);         // roll to a stop
+      if (keys.Space) c.speed -= Math.sign(c.speed) * Math.min(Math.abs(c.speed), 14 * dt);
+      c.speed = THREE.MathUtils.clamp(c.speed, -3.5, d.maxV);
+      c.steer += (r - c.steer) * (1 - Math.exp(-6 * dt));
+      const ny = c.yaw - c.steer * (c.speed / (d.wz * 2)) * 0.6 * dt;
+      const nx = c.x + Math.sin(ny) * c.speed * dt, nz = c.z + Math.cos(ny) * c.speed * dt;
+      if (!carHits(c, nx, nz, ny)) { c.x = nx; c.z = nz; c.yaw = ny; }
+      else if (!carHits(c, c.x, c.z, ny)) { c.yaw = ny; c.speed *= -0.25; }
+      else c.speed *= -0.25;
+    } else if (c.target) {
+      const k = 1 - Math.exp(-10 * dt), tg = c.target;
+      c.x += (tg.x - c.x) * k; c.z += (tg.z - c.z) * k;
+      let dy = tg.yaw - c.yaw; dy = Math.atan2(Math.sin(dy), Math.cos(dy)); c.yaw += dy * k;
+      c.speed = tg.speed || 0; c.steer += (THREE.MathUtils.clamp(dy * 8, -1, 1) - c.steer) * k;
+    } else if (!c.seats[0]) { c.speed = 0; c.steer *= 0.9; }
+    c.g.position.set(c.x, 0, c.z); c.g.rotation.y = c.yaw;
+    c.roll += c.speed * dt / d.wr;
+    for (const w of c.wheels) { w.spin.rotation.x = c.roll; if (w.front) w.pivot.rotation.y = -c.steer * 0.45; }
+  }
+  if (me.car) {                       // chase camera behind the car
+    const c = cars.get(me.car.id), d = c.def, fx = Math.sin(c.yaw), fz = Math.cos(c.yaw);
+    _chase.set(c.x - fx * d.camD, d.camH, c.z - fz * d.camD);
+    if (camera.position.distanceTo(_chase) > 25) camera.position.copy(_chase);
+    camera.position.lerp(_chase, 1 - Math.exp(-5 * dt));
+    camera.lookAt(c.x + fx * 2.5, 1.1, c.z + fz * 2.5);
+    look.yaw = camera.rotation.y; look.pitch = camera.rotation.x;
+  }
+}
+initCars();
 
 buildInventoryUI();
 rebuildGhost();
@@ -2953,6 +3214,7 @@ renderer.setAnimationLoop(() => {
   tod += (todTarget - tod) * (1 - Math.exp(-1.2 * dt));
   rainMix += (rainTarget - rainMix) * (1 - Math.exp(-1.2 * dt));
   updateMovement(dt);
+  updateCars(dt);
   updateGhost();
   updateHover();
   applyLighting();
@@ -3015,6 +3277,7 @@ renderer.setAnimationLoop(() => {
   sendTimer += dt;
   if (net.online && sendTimer > 1 / 12) {
     sendTimer = 0;
+    if (me.car && me.car.seat === 0) { const c = cars.get(me.car.id); net.socket.volatile.emit('car:move', { id: c.id, x: c.x, z: c.z, yaw: c.yaw, speed: c.speed }); }
     const mp = myPose(), next = { x: mp.x, z: mp.z, yaw: mp.yaw, pose: mp.pose, sy: mp.sy, pitch: look.pitch, y: mp.base + me.jy };
     if (Math.abs(next.x - lastSent.x) + Math.abs(next.z - lastSent.z) + Math.abs(next.yaw - lastSent.yaw) + Math.abs(next.pitch - lastSent.pitch) + Math.abs(next.y - lastSent.y) > 0.002 || next.pose !== lastSent.pose) {
       lastSent = next;
