@@ -102,11 +102,14 @@ for (const sig of ['SIGTERM', 'SIGINT']) {
     process.exit(0);
   });
 }
+// Drivable cars in the garden (positions are kept while the server runs; they park again after a restart)
+const CARS = { suv: { x: -13, z: -1.4, yaw: 0, seats: 7 }, sedan: { x: -13, z: 4.6, yaw: 0, seats: 4 } };
 function getRoom(name) {
   if (!rooms.has(name)) rooms.set(name, { objects: [], env: { night: 0, rain: 0, party: 0 }, players: new Map() });
   const r = rooms.get(name);
   if (!r.pet) r.pet = { targetId: null, name: '' };
   if (!r.hs) r.hs = { phase: 'idle', seekerId: null, seekerName: '', found: [], endsAt: 0, timer: null };
+  if (!r.cars) r.cars = Object.fromEntries(Object.entries(CARS).map(([id, c]) => [id, { id, x: c.x, z: c.z, yaw: c.yaw, seats: Array(c.seats).fill(null) }]));
   return r;
 }
 
@@ -147,6 +150,7 @@ io.on('connection', (socket) => {
     if (!room) return;
     releaseLocks();
     if (room.pet.targetId === socket.id) { room.pet = { targetId: null, name: '' }; socket.to(roomName).emit('pet', room.pet); }
+    leaveCars();
     if (room.hs.phase !== 'idle') {
       if (room.hs.seekerId === socket.id) { room.players.delete(socket.id); hsEnd(room, roomName, 'the seeker left'); }
       else { room.hs.found = room.hs.found.filter(id => id !== socket.id); room.players.delete(socket.id);
@@ -172,7 +176,7 @@ io.on('connection', (socket) => {
     };
     room.players.set(socket.id, me);
     socket.join(roomName);
-    socket.emit('init', { you: socket.id, objects: room.objects.map(({ lockedBy, ...o }) => o), players: [...room.players.values()], env: room.env, pet: room.pet,
+    socket.emit('init', { you: socket.id, objects: room.objects.map(({ lockedBy, ...o }) => o), players: [...room.players.values()], env: room.env, pet: room.pet, cars: room.cars,
       hs: { phase: room.hs.phase, seekerId: room.hs.seekerId, seekerName: room.hs.seekerName, found: room.hs.found, endsAt: room.hs.endsAt, now: Date.now() } });
     socket.to(roomName).emit('playerJoined', me);
     console.log(`${me.name} joined "${roomName}" (${room.players.size} online)`);
@@ -281,6 +285,38 @@ io.on('connection', (socket) => {
     if (!room || !EMOTES.has(d.type) || Date.now() - lastEmote < 300) return;
     lastEmote = Date.now();
     socket.to(roomName).emit('emoted', { id: socket.id, type: d.type });
+  });
+
+  // ---- cars: seats are claimed through the server so two people can't drive the same car
+  function leaveCars() {
+    if (!room) return;
+    for (const c of Object.values(room.cars)) {
+      if (!c.seats.includes(socket.id)) continue;
+      c.seats = c.seats.map(id => (id === socket.id ? null : id));
+      io.to(roomName).emit('car:seats', { id: c.id, seats: c.seats });
+    }
+  }
+  socket.on('car:enter', (d = {}) => {
+    const c = room && room.cars[d.id];
+    if (!c || !Number.isInteger(d.seat) || d.seat < 0 || d.seat >= c.seats.length) return;
+    if (c.seats[d.seat] && c.seats[d.seat] !== socket.id) { socket.emit('car:denied', { id: c.id }); return; }
+    leaveCars();
+    c.seats[d.seat] = socket.id;
+    io.to(roomName).emit('car:seats', { id: c.id, seats: c.seats });
+  });
+  socket.on('car:exit', () => leaveCars());
+  socket.on('car:move', (d = {}) => {
+    const c = room && room.cars[d.id];
+    if (!c || c.seats[0] !== socket.id || !num(d.x, -22, 22) || !num(d.z, -22, 22) || !num(d.yaw, -1e6, 1e6)) return;
+    c.x = d.x; c.z = d.z; c.yaw = d.yaw;
+    socket.to(roomName).volatile.emit('car:moved', { id: c.id, x: d.x, z: d.z, yaw: d.yaw, speed: num(d.speed, -20, 20) ? d.speed : 0 });
+  });
+  let lastHorn = 0;
+  socket.on('car:horn', (d = {}) => {
+    const c = room && room.cars[d.id];
+    if (!c || !c.seats.includes(socket.id) || Date.now() - lastHorn < 400) return;
+    lastHorn = Date.now();
+    socket.to(roomName).emit('car:horned', { id: c.id });
   });
 
   // ---- Bruno the dog: whoever calls him becomes his owner; calling again sends him to nap
